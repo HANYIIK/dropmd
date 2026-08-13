@@ -11,6 +11,10 @@ python -m PyInstaller --noconfirm --clean DropMD.spec
 mkdir -p release
 architecture="$(uname -m)"
 release_name="${DROPMD_RELEASE_NAME:-DropMD-macOS-${architecture}.dmg}"
-hdiutil create -volname "DropMD" -srcfolder dist/DropMD.app -ov -format UDZO "release/$release_name"
+python -m dmgbuild \
+  -s packaging/macos/dmg_settings.py \
+  -D app=dist/DropMD.app \
+  "Install DropMD" \
+  "release/$release_name"
 
 echo "Created release/$release_name"

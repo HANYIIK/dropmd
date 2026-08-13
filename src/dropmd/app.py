@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import subprocess
 import sys
 from pathlib import Path
 
 from PySide6.QtCore import QEvent, QObject, QPoint, QRunnable, QSettings, QSize, Qt, QThreadPool, QTimer, QUrl, Signal
-from PySide6.QtGui import QColor, QDesktopServices, QDragEnterEvent, QDropEvent, QIcon, QMouseEvent
+from PySide6.QtGui import QAction, QActionGroup, QColor, QDesktopServices, QDragEnterEvent, QDropEvent, QIcon, QMouseEvent
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -14,6 +15,8 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QMainWindow,
+    QMenu,
+    QProgressBar,
     QPushButton,
     QScrollArea,
     QSizeGrip,
@@ -24,6 +27,13 @@ from PySide6.QtWidgets import (
 
 from .converter import SUPPORTED_EXTENSIONS, convert_file, is_supported, output_path_for
 from .styles import stylesheet
+
+
+THEME_LABELS = {"system": "跟随系统", "light": "浅色", "dark": "深色"}
+
+
+def system_theme(application: QApplication) -> str:
+    return "dark" if application.styleHints().colorScheme() == Qt.ColorScheme.Dark else "light"
 
 
 class DesktopApplication(QApplication):
@@ -76,12 +86,12 @@ class ConversionWorker(QRunnable):
 
 
 class TitleBar(QFrame):
-    themeToggleRequested = Signal()
+    themeModeRequested = Signal(str)
 
     def __init__(self):
         super().__init__()
         self.setObjectName("titleBar")
-        self.setFixedHeight(52)
+        self.setFixedHeight(54)
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(18, 0, 14, 0)
@@ -96,23 +106,31 @@ class TitleBar(QFrame):
 
         brand = QLabel("DROPMD")
         brand.setObjectName("brandMark")
-        local = QLabel("LOCAL ONLY")
-        local.setObjectName("localBadge")
 
-        self.theme_button = QPushButton("☾")
+        self.theme_button = QPushButton("◐")
         self.theme_button.setObjectName("themeButton")
         self.theme_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.theme_button.setAccessibleName("切换深色模式")
-        self.theme_button.setToolTip("切换深色模式")
-        self.theme_button.clicked.connect(self.themeToggleRequested)
+        self.theme_button.setAccessibleName("外观设置")
+        self.theme_button.setToolTip("外观设置")
+
+        self.theme_menu = QMenu(self.theme_button)
+        self.theme_group = QActionGroup(self.theme_menu)
+        self.theme_group.setExclusive(True)
+        self.theme_actions: dict[str, QAction] = {}
+        for mode in ("system", "light", "dark"):
+            action = QAction(THEME_LABELS[mode], self.theme_menu)
+            action.setCheckable(True)
+            action.triggered.connect(lambda checked=False, selected=mode: self.themeModeRequested.emit(selected))
+            self.theme_group.addAction(action)
+            self.theme_menu.addAction(action)
+            self.theme_actions[mode] = action
+        self.theme_button.setMenu(self.theme_menu)
 
         layout.addWidget(self.close_button)
         layout.addWidget(self.minimize_button)
         layout.addWidget(self.maximize_button)
         layout.addSpacing(12)
         layout.addWidget(brand)
-        layout.addSpacing(4)
-        layout.addWidget(local)
         layout.addStretch()
         layout.addWidget(self.theme_button)
 
@@ -125,12 +143,10 @@ class TitleBar(QFrame):
         button.setToolTip(accessible_name)
         return button
 
-    def set_theme(self, theme: str) -> None:
-        dark = theme == "dark"
-        self.theme_button.setText("☀" if dark else "☾")
-        action = "浅色" if dark else "深色"
-        self.theme_button.setAccessibleName(f"切换{action}模式")
-        self.theme_button.setToolTip(f"切换{action}模式")
+    def set_theme(self, mode: str, resolved_theme: str) -> None:
+        self.theme_actions[mode].setChecked(True)
+        self.theme_button.setText("◐" if mode == "system" else ("☀" if resolved_theme == "dark" else "☾"))
+        self.theme_button.setToolTip(f"外观：{THEME_LABELS[mode]}")
 
     def _toggle_maximized(self) -> None:
         window = self.window()
@@ -161,34 +177,35 @@ class DropZone(QFrame):
         self.setObjectName("dropZone")
         self.setProperty("dragActive", False)
         self.setAcceptDrops(True)
-        self.setMinimumHeight(218)
+        self.setMinimumHeight(210)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(32, 24, 32, 24)
-        layout.setSpacing(9)
+        layout.setSpacing(8)
         layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
-        icon = QLabel(".MD")
+        icon = QLabel("↓")
         icon.setObjectName("dropIcon")
         icon.setFixedSize(50, 50)
         icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
-        title = QLabel("拖入文件，立即转换")
+        title = QLabel("将文件拖到这里")
         title.setObjectName("dropTitle")
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
-        hint = QLabel("Markdown 将以同名文件保存在原目录")
+        hint = QLabel("自动在原目录生成同名 Markdown 文件")
         hint.setObjectName("caption")
         hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         self.choose_button = QPushButton("选择文件")
         self.choose_button.setObjectName("primaryButton")
         self.choose_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.choose_button.setShortcut("Ctrl+O")
 
         layout.addWidget(icon, alignment=Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(title)
         layout.addWidget(hint)
-        layout.addSpacing(5)
+        layout.addSpacing(6)
         layout.addWidget(self.choose_button, alignment=Qt.AlignmentFlag.AlignCenter)
 
     def _set_drag_active(self, active: bool) -> None:
@@ -215,13 +232,15 @@ class DropZone(QFrame):
 class JobRow(QFrame):
     markdownCopied = Signal(object)
     copyFailed = Signal(str)
+    retryRequested = Signal(object)
 
     def __init__(self, source: Path):
         super().__init__()
         self.source = source
         self.destination: Path | None = None
+        self.state = "pending"
         self.setObjectName("jobRow")
-        self.setMinimumHeight(70)
+        self.setMinimumHeight(74)
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(14, 10, 10, 10)
@@ -229,32 +248,32 @@ class JobRow(QFrame):
 
         file_icon = QLabel(source.suffix[1:].upper()[:4] or "FILE")
         file_icon.setObjectName("fileType")
-        file_icon.setFixedSize(42, 36)
+        file_icon.setFixedSize(42, 38)
         file_icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         details = QVBoxLayout()
-        details.setSpacing(2)
+        details.setSpacing(3)
         name = QLabel(source.name)
         name.setObjectName("fileName")
         name.setToolTip(str(source))
-        path = QLabel(str(source.parent))
-        path.setObjectName("path")
-        path.setToolTip(str(source.parent))
-        path.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        self.meta = QLabel(str(source.parent))
+        self.meta.setObjectName("path")
+        self.meta.setToolTip(str(source.parent))
+        self.meta.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         details.addWidget(name)
-        details.addWidget(path)
+        details.addWidget(self.meta)
 
         self.status = QLabel("等待转换")
         self.status.setObjectName("statusPending")
-        self.status.setMinimumWidth(76)
+        self.status.setMinimumWidth(68)
         self.status.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
 
-        self.copy_button = QPushButton("复制 Markdown")
+        self.copy_button = QPushButton("复制")
         self.copy_button.setObjectName("copyButton")
         self.copy_button.setProperty("copied", False)
         self.copy_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.copy_button.setAccessibleName("复制 Markdown 内容")
-        self.copy_button.clicked.connect(self._copy_markdown)
+        self.copy_button.clicked.connect(self.copy_markdown)
         self.copy_button.hide()
 
         self.open_button = QPushButton("打开")
@@ -263,53 +282,94 @@ class JobRow(QFrame):
         self.open_button.clicked.connect(self._open_destination)
         self.open_button.hide()
 
+        self.more_button = QPushButton("•••")
+        self.more_button.setObjectName("moreButton")
+        self.more_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.more_button.setAccessibleName("更多操作")
+        self.more_button.setToolTip("更多操作")
+        self.more_menu = QMenu(self.more_button)
+        reveal_action = self.more_menu.addAction("在文件夹中显示")
+        reveal_action.triggered.connect(self._reveal_destination)
+        copy_path_action = self.more_menu.addAction("复制文件路径")
+        copy_path_action.triggered.connect(self._copy_path)
+        self.retry_action = self.more_menu.addAction("重新转换")
+        self.retry_action.triggered.connect(lambda: self.retryRequested.emit(self.source))
+        self.retry_action.setVisible(False)
+        self.more_button.setMenu(self.more_menu)
+        self.more_button.hide()
+
         layout.addWidget(file_icon)
         layout.addLayout(details, 1)
         layout.addWidget(self.status)
         layout.addWidget(self.copy_button)
         layout.addWidget(self.open_button)
+        layout.addWidget(self.more_button)
 
     def mark_working(self) -> None:
+        self.state = "working"
         self.status.setText("转换中…")
         self.status.setObjectName("statusWorking")
+        self.copy_button.hide()
+        self.open_button.hide()
+        self.more_button.hide()
         self._refresh(self.status)
 
     def mark_success(self, destination: Path) -> None:
+        self.state = "success"
         self.destination = destination
+        size = destination.stat().st_size
+        self.meta.setText(f"{self._format_size(size)} · {destination.parent}")
+        self.meta.setToolTip(str(destination))
         self.status.setText("已完成")
         self.status.setObjectName("statusSuccess")
         self._refresh(self.status)
         self.copy_button.show()
         self.open_button.show()
+        self.more_button.show()
+        self.retry_action.setVisible(False)
 
     def mark_error(self, message: str) -> None:
-        self.status.setText("失败")
+        self.state = "error"
+        self.status.setText("转换失败")
         self.status.setObjectName("statusError")
         self.status.setToolTip(message)
+        self.meta.setText(message)
+        self.meta.setToolTip(message)
+        self.retry_action.setVisible(True)
+        self.more_button.show()
         self._refresh(self.status)
+
+    @staticmethod
+    def _format_size(size: int) -> str:
+        if size < 1024:
+            return f"{size} B"
+        if size < 1024 * 1024:
+            return f"{size / 1024:.1f} KB"
+        return f"{size / (1024 * 1024):.1f} MB"
 
     @staticmethod
     def _refresh(widget: QWidget) -> None:
         widget.style().unpolish(widget)
         widget.style().polish(widget)
 
-    def _copy_markdown(self) -> None:
+    def copy_markdown(self) -> bool:
         if not self.destination:
-            return
+            return False
         try:
             markdown = self.destination.read_text(encoding="utf-8")
         except Exception as error:
             self.copyFailed.emit(str(error).strip() or "无法读取 Markdown 文件")
-            return
+            return False
         QApplication.clipboard().setText(markdown)
         self.copy_button.setText("已复制 ✓")
         self.copy_button.setProperty("copied", True)
         self._refresh(self.copy_button)
         self.markdownCopied.emit(self.destination)
         QTimer.singleShot(1800, self._reset_copy_button)
+        return True
 
     def _reset_copy_button(self) -> None:
-        self.copy_button.setText("复制 Markdown")
+        self.copy_button.setText("复制")
         self.copy_button.setProperty("copied", False)
         self._refresh(self.copy_button)
 
@@ -317,15 +377,30 @@ class JobRow(QFrame):
         if self.destination:
             QDesktopServices.openUrl(QUrl.fromLocalFile(str(self.destination)))
 
+    def _reveal_destination(self) -> None:
+        if not self.destination:
+            return
+        if sys.platform == "darwin":
+            subprocess.Popen(["open", "-R", str(self.destination)])
+        elif sys.platform == "win32":
+            subprocess.Popen(["explorer", "/select,", str(self.destination)])
+        else:
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(self.destination.parent)))
+
+    def _copy_path(self) -> None:
+        if self.destination:
+            QApplication.clipboard().setText(str(self.destination))
+
 
 class MainWindow(QMainWindow):
-    def __init__(self, theme: str, settings: QSettings):
+    def __init__(self, theme_mode: str, settings: QSettings):
         super().__init__()
-        self.theme = theme
+        self.theme_mode = theme_mode if theme_mode in THEME_LABELS else "system"
+        self.theme = self._resolved_theme()
         self.settings = settings
-        self.setWindowTitle("DropMD — 文件转 Markdown")
-        self.setMinimumSize(QSize(760, 650))
-        self.resize(900, 740)
+        self.setWindowTitle("DropMD — 文档转 Markdown")
+        self.setMinimumSize(QSize(760, 660))
+        self.resize(920, 760)
         self.setAcceptDrops(True)
         self.setWindowFlags(Qt.WindowType.Window | Qt.WindowType.FramelessWindowHint)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
@@ -339,6 +414,7 @@ class MainWindow(QMainWindow):
         self.thread_pool.setMaxThreadCount(2)
         self.rows: dict[Path, JobRow] = {}
         self.running: set[Path] = set()
+        self.auto_copy_sources: set[Path] = set()
 
         canvas = QWidget()
         canvas.setObjectName("windowCanvas")
@@ -352,7 +428,7 @@ class MainWindow(QMainWindow):
         shadow = QGraphicsDropShadowEffect(self)
         shadow.setBlurRadius(30)
         shadow.setOffset(QPoint(0, 7))
-        shadow.setColor(QColor(7, 20, 18, 85))
+        shadow.setColor(QColor(7, 20, 18, 72))
         self.surface.setGraphicsEffect(shadow)
         self.shadow = shadow
         self.canvas_layout.addWidget(self.surface)
@@ -362,21 +438,21 @@ class MainWindow(QMainWindow):
         shell.setSpacing(0)
 
         self.title_bar = TitleBar()
-        self.title_bar.set_theme(self.theme)
-        self.title_bar.themeToggleRequested.connect(self.toggle_theme)
+        self.title_bar.set_theme(self.theme_mode, self.theme)
+        self.title_bar.themeModeRequested.connect(self.set_theme_mode)
         shell.addWidget(self.title_bar)
 
         content = QWidget()
         content_layout = QVBoxLayout(content)
-        content_layout.setContentsMargins(34, 26, 34, 22)
+        content_layout.setContentsMargins(36, 26, 36, 24)
         content_layout.setSpacing(16)
         shell.addWidget(content, 1)
 
-        eyebrow = QLabel("LOCAL DOCUMENT PIPELINE")
+        eyebrow = QLabel("DOCUMENT → MARKDOWN")
         eyebrow.setObjectName("eyebrow")
-        title = QLabel("文件进来，Markdown 出去。")
+        title = QLabel("把文档，变成好用的 Markdown。")
         title.setObjectName("title")
-        subtitle = QLabel("完全在本机完成转换，不上传文件，也不依赖外部服务。")
+        subtitle = QLabel("拖入即可转换。结构、表格与内容会尽可能完整保留。")
         subtitle.setObjectName("subtitle")
 
         content_layout.addWidget(eyebrow)
@@ -388,17 +464,24 @@ class MainWindow(QMainWindow):
         self.drop_zone.choose_button.clicked.connect(self.choose_files)
         content_layout.addWidget(self.drop_zone)
 
-        options = QHBoxLayout()
-        options.setSpacing(12)
-        self.overwrite = QCheckBox("覆盖已有同名 .md")
+        preference_bar = QFrame()
+        preference_bar.setObjectName("preferenceBar")
+        preference_layout = QHBoxLayout(preference_bar)
+        preference_layout.setContentsMargins(12, 7, 12, 7)
+        preference_layout.setSpacing(16)
+        self.overwrite = QCheckBox("覆盖已有同名文件")
         self.overwrite.setChecked(self.settings.value("overwrite", True, type=bool))
         self.overwrite.toggled.connect(lambda value: self.settings.setValue("overwrite", value))
+        self.auto_copy = QCheckBox("单个文件完成后自动复制")
+        self.auto_copy.setChecked(self.settings.value("auto_copy", False, type=bool))
+        self.auto_copy.toggled.connect(lambda value: self.settings.setValue("auto_copy", value))
         self.supported_label = QLabel("DOCX · PDF · PPTX · XLSX · HTML · CSV · TXT")
         self.supported_label.setObjectName("caption")
-        options.addWidget(self.overwrite)
-        options.addStretch()
-        options.addWidget(self.supported_label)
-        content_layout.addLayout(options)
+        preference_layout.addWidget(self.overwrite)
+        preference_layout.addWidget(self.auto_copy)
+        preference_layout.addStretch()
+        preference_layout.addWidget(self.supported_label)
+        content_layout.addWidget(preference_bar)
 
         self.notice = QLabel()
         self.notice.setWordWrap(True)
@@ -407,11 +490,16 @@ class MainWindow(QMainWindow):
 
         list_header = QHBoxLayout()
         list_header.setSpacing(10)
-        list_title = QLabel("转换记录")
+        list_title = QLabel("最近转换")
         list_title.setObjectName("sectionTitle")
-        self.section_meta = QLabel("完成后可直接复制 Markdown")
+        self.section_meta = QLabel("拖入多个文件可批量处理")
         self.section_meta.setObjectName("sectionMeta")
-        self.clear_button = QPushButton("清空")
+        self.progress = QProgressBar()
+        self.progress.setObjectName("batchProgress")
+        self.progress.setTextVisible(False)
+        self.progress.setFixedSize(86, 5)
+        self.progress.hide()
+        self.clear_button = QPushButton("清空记录")
         self.clear_button.setObjectName("linkButton")
         self.clear_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.clear_button.clicked.connect(self.clear_finished)
@@ -419,6 +507,7 @@ class MainWindow(QMainWindow):
         list_header.addWidget(list_title)
         list_header.addWidget(self.section_meta)
         list_header.addStretch()
+        list_header.addWidget(self.progress)
         list_header.addWidget(self.clear_button)
         content_layout.addLayout(list_header)
 
@@ -428,11 +517,18 @@ class MainWindow(QMainWindow):
         panel_layout.setContentsMargins(0, 0, 0, 0)
         panel_layout.setSpacing(0)
 
-        self.empty_hint = QLabel("转换记录会出现在这里")
+        empty = QVBoxLayout()
+        empty.setContentsMargins(20, 22, 20, 22)
+        empty.setSpacing(4)
+        self.empty_title = QLabel("准备好开始第一次转换")
+        self.empty_title.setObjectName("emptyTitle")
+        self.empty_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.empty_hint = QLabel("转换结果和后续操作会集中显示在这里")
         self.empty_hint.setObjectName("emptyHint")
         self.empty_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.empty_hint.setMinimumHeight(94)
-        panel_layout.addWidget(self.empty_hint)
+        empty.addWidget(self.empty_title)
+        empty.addWidget(self.empty_hint)
+        panel_layout.addLayout(empty)
 
         self.scroll = QScrollArea()
         self.scroll.setWidgetResizable(True)
@@ -451,20 +547,39 @@ class MainWindow(QMainWindow):
         footer.addWidget(QSizeGrip(self))
         content_layout.addLayout(footer)
 
-    def toggle_theme(self) -> None:
-        self.theme = "light" if self.theme == "dark" else "dark"
-        self.settings.setValue("theme", self.theme)
+    def _resolved_theme(self) -> str:
+        if self.theme_mode == "system":
+            application = QApplication.instance()
+            return system_theme(application) if application else "light"
+        return self.theme_mode
+
+    def set_theme_mode(self, mode: str) -> None:
+        if mode not in THEME_LABELS:
+            return
+        self.theme_mode = mode
+        self.settings.setValue("theme_mode", mode)
+        self._apply_theme()
+
+    def _apply_theme(self) -> None:
+        self.theme = self._resolved_theme()
         QApplication.instance().setStyleSheet(stylesheet(self.theme))
-        self.title_bar.set_theme(self.theme)
+        self.title_bar.set_theme(self.theme_mode, self.theme)
+
+    def system_color_scheme_changed(self) -> None:
+        if self.theme_mode == "system":
+            self._apply_theme()
 
     def choose_files(self) -> None:
         extensions = " ".join(f"*{extension}" for extension in sorted(SUPPORTED_EXTENSIONS))
+        initial_folder = self.settings.value("last_folder", str(Path.home()))
         paths, _ = QFileDialog.getOpenFileNames(
             self,
             "选择要转换的文件",
-            str(Path.home()),
+            initial_folder,
             f"支持的文件 ({extensions});;所有文件 (*)",
         )
+        if paths:
+            self.settings.setValue("last_folder", str(Path(paths[0]).parent))
         self.add_files([Path(path) for path in paths])
 
     def add_files(self, candidates: list[Path]) -> None:
@@ -475,6 +590,8 @@ class MainWindow(QMainWindow):
             else:
                 files.append(candidate)
 
+        supported = [path.expanduser().resolve() for path in files if is_supported(path.expanduser().resolve())]
+        enable_auto_copy = self.auto_copy.isChecked() and len(supported) == 1
         accepted = 0
         unsupported: list[str] = []
         for source in files:
@@ -497,9 +614,12 @@ class MainWindow(QMainWindow):
             row = JobRow(source)
             row.markdownCopied.connect(self._markdown_copied)
             row.copyFailed.connect(lambda message, name=source.name: self._show_notice(f"{name} 复制失败：{message}", success=False))
+            row.retryRequested.connect(lambda path: self.add_files([path]))
             self.rows[source] = row
             self.rows_layout.insertWidget(0, row)
             self.running.add(source)
+            if enable_auto_copy:
+                self.auto_copy_sources.add(source)
             accepted += 1
 
             worker = ConversionWorker(source, self.overwrite.isChecked())
@@ -509,31 +629,57 @@ class MainWindow(QMainWindow):
             self.thread_pool.start(worker)
 
         if accepted:
+            self.empty_title.hide()
             self.empty_hint.hide()
             self.scroll.show()
             self.clear_button.show()
-            self._show_notice(f"正在转换 {accepted} 个文件…", success=True)
+            self._update_summary()
+            self._show_notice(f"已加入 {accepted} 个文件，正在转换…", success=True)
         if unsupported:
             names = "、".join(unsupported[:3])
             extra = f" 等 {len(unsupported)} 个文件" if len(unsupported) > 3 else ""
-            self._show_notice(f"未加入：{names}{extra}。请检查格式或同名输出冲突。", success=False)
+            self._show_notice(f"未加入 {names}{extra}。请选择支持的文件格式。", success=False)
 
     def _conversion_succeeded(self, source: Path, destination: Path) -> None:
         self.running.discard(source)
         row = self.rows.get(source)
         if row:
             row.mark_success(destination)
-        self._show_notice(f"已生成 {destination.name}，现在可以一键复制。", success=True)
+            if source in self.auto_copy_sources:
+                row.copy_markdown()
+        self.auto_copy_sources.discard(source)
+        self._update_summary()
+        self._show_notice(f"已生成 {destination.name}。", success=True)
 
     def _conversion_failed(self, source: Path, message: str) -> None:
         self.running.discard(source)
+        self.auto_copy_sources.discard(source)
         row = self.rows.get(source)
         if row:
             row.mark_error(message)
+        self._update_summary()
         self._show_notice(f"{source.name} 转换失败：{message}", success=False)
 
+    def _update_summary(self) -> None:
+        total = len(self.rows)
+        completed = sum(row.state in {"success", "error"} for row in self.rows.values())
+        successes = sum(row.state == "success" for row in self.rows.values())
+        errors = sum(row.state == "error" for row in self.rows.values())
+        if self.running:
+            self.section_meta.setText(f"{completed} / {total} 完成")
+            self.progress.setRange(0, max(total, 1))
+            self.progress.setValue(completed)
+            self.progress.show()
+        elif total:
+            suffix = f" · {errors} 个失败" if errors else ""
+            self.section_meta.setText(f"{successes} 个文件已完成{suffix}")
+            self.progress.hide()
+        else:
+            self.section_meta.setText("拖入多个文件可批量处理")
+            self.progress.hide()
+
     def _markdown_copied(self, destination: Path) -> None:
-        self._show_notice(f"已复制 {destination.name} 的全部 Markdown 内容。", success=True)
+        self._show_notice(f"已复制 {destination.name} 的 Markdown 内容。", success=True)
 
     def _show_notice(self, message: str, *, success: bool) -> None:
         self.notice.setText(message)
@@ -541,7 +687,7 @@ class MainWindow(QMainWindow):
         self.notice.style().unpolish(self.notice)
         self.notice.style().polish(self.notice)
         self.notice.show()
-        QTimer.singleShot(5000, self.notice.hide)
+        QTimer.singleShot(4500, self.notice.hide)
 
     def clear_finished(self) -> None:
         for source, row in list(self.rows.items()):
@@ -551,8 +697,10 @@ class MainWindow(QMainWindow):
                 row.deleteLater()
         if not self.rows:
             self.scroll.hide()
+            self.empty_title.show()
             self.empty_hint.show()
             self.clear_button.hide()
+        self._update_summary()
 
     def changeEvent(self, event: QEvent) -> None:
         if event.type() == QEvent.Type.WindowStateChange:
@@ -566,7 +714,7 @@ class MainWindow(QMainWindow):
         super().changeEvent(event)
 
     def resizeEvent(self, event) -> None:
-        self.supported_label.setVisible(self.width() >= 820)
+        self.supported_label.setVisible(self.width() >= 870)
         self.section_meta.setVisible(self.width() >= 780)
         super().resizeEvent(event)
 
@@ -583,14 +731,20 @@ class MainWindow(QMainWindow):
 def main() -> int:
     application = DesktopApplication(sys.argv)
     application.setApplicationName("DropMD")
+    application.setApplicationDisplayName("DropMD")
+    application.setApplicationVersion("1.2.0")
     application.setOrganizationName("DropMD")
+    application.setOrganizationDomain("dropmd.app")
+    application.setDesktopFileName("com.dropmd.desktop")
     application.setStyle("Fusion")
     settings = QSettings("DropMD", "DropMD")
-    theme = settings.value("theme", "light")
-    if theme not in {"light", "dark"}:
-        theme = "light"
-    application.setStyleSheet(stylesheet(theme))
-    window = MainWindow(theme, settings)
+    theme_mode = settings.value("theme_mode", "system")
+    if theme_mode not in THEME_LABELS:
+        theme_mode = "system"
+    initial_theme = system_theme(application) if theme_mode == "system" else theme_mode
+    application.setStyleSheet(stylesheet(initial_theme))
+    window = MainWindow(theme_mode, settings)
+    application.styleHints().colorSchemeChanged.connect(lambda scheme: window.system_color_scheme_changed())
     application.filesOpened.connect(window.add_files)
     window.show()
     launch_files = application.enable_file_handler()

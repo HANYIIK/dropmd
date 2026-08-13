@@ -52,12 +52,14 @@ py -3.12 -m venv .venv
 项目包含 GitHub Actions。推送到 GitHub 后，在 Actions 页面手动运行 `Build installers` 即可下载 Apple 芯片 Mac、Intel Mac 和 Windows 三个安装包；推送 `v1.0.0` 这类标签时还会自动创建 GitHub Release。
 
 ```bash
-git tag v1.1.0
-git push origin v1.1.0
+git tag v1.2.0
+git push origin v1.2.0
 ```
 
 ## 说明
 
 DropMD 使用 MarkItDown 的 Python API，不会调用外部 `markitdown` 命令。安装包会包含 Python 运行时、Qt 和转换依赖，因此用户无需另行配置环境。
 
-转换完成后，可在转换记录中点击“复制 Markdown”，将生成文件的完整内容直接复制到剪贴板。标题栏右侧支持浅色/深色主题切换，并会记住上次选择。
+默认外观跟随系统，也可在标题栏右侧固定为浅色或深色。转换完成后可复制 Markdown、打开文件、在文件夹中显示或复制文件路径；还可选择在单个文件转换完成后自动复制。
+
+macOS 安装包带有标准拖拽安装界面，请将 `DropMD.app` 拖到 `Applications`。应用包包含产品分类、版本与说明元数据，安装到“应用程序”目录后可通过 Spotlight 搜索 `DropMD`。

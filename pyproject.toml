@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "dropmd-desktop"
-version = "1.1.0"
+version = "1.2.0"
 description = "Drop local documents and convert them to Markdown beside the source file."
 readme = "README.md"
 requires-python = ">=3.11,<3.14"
@@ -15,6 +15,7 @@ dependencies = [
 
 [project.optional-dependencies]
 build = [
+  "dmgbuild>=1.6,<2; platform_system == 'Darwin'",
   "Pillow>=11,<13",
   "pyinstaller>=6.11,<7",
 ]
