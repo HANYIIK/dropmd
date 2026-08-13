@@ -1,0 +1,60 @@
+name: Build installers
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  macos:
+    strategy:
+      matrix:
+        include:
+          - runner: macos-14
+            architecture: Apple-Silicon
+          - runner: macos-15-intel
+            architecture: Intel
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: DROPMD_RELEASE_NAME=DropMD-macOS-${{ matrix.architecture }}.dmg bash scripts/build_macos.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DropMD-macOS-${{ matrix.architecture }}
+          path: release/DropMD-macOS-${{ matrix.architecture }}.dmg
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: choco install innosetup --no-progress -y
+      - shell: pwsh
+        run: ./scripts/build_windows.ps1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DropMD-Windows
+          path: release/DropMD-Windows-Setup.exe
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [macos, windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*

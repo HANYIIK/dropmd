@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=75", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dropmd-desktop"
+version = "1.1.0"
+description = "Drop local documents and convert them to Markdown beside the source file."
+readme = "README.md"
+requires-python = ">=3.11,<3.14"
+dependencies = [
+  "PySide6>=6.8,<7",
+  "markitdown[docx,pdf,pptx,xlsx,xls,outlook]==0.1.7",
+]
+
+[project.optional-dependencies]
+build = [
+  "Pillow>=11,<13",
+  "pyinstaller>=6.11,<7",
+]
+test = ["pytest>=8,<9"]
+
+[project.gui-scripts]
+dropmd = "dropmd.app:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
