@@ -27,28 +27,28 @@ PALETTES = {
         "scroll": "#b9cbc7",
     },
     "dark": {
-        "canvas": "#0e1514",
-        "surface": "#151e1c",
-        "surface_alt": "#1a2522",
-        "surface_raised": "#202c29",
-        "surface_hover": "#273431",
-        "surface_pressed": "#30403c",
-        "text": "#e5eeec",
-        "text_soft": "#a9bbb7",
-        "text_faint": "#7c928d",
-        "border": "#2b3a37",
-        "border_strong": "#40534f",
-        "accent": "#59bbae",
-        "accent_hover": "#6ccbbe",
-        "accent_soft": "#203d38",
-        "accent_text": "#80d2c5",
-        "button_text": "#12201d",
-        "success": "#6bc6b7",
-        "success_soft": "#203a35",
-        "warning": "#dfad60",
-        "error": "#ed8585",
-        "error_soft": "#432929",
-        "scroll": "#40534f",
+        "canvas": "#0b0f12",
+        "surface": "#151a1e",
+        "surface_alt": "#1a2024",
+        "surface_raised": "#22292e",
+        "surface_hover": "#293137",
+        "surface_pressed": "#313b41",
+        "text": "#eef2f1",
+        "text_soft": "#b1bab8",
+        "text_faint": "#7f8b89",
+        "border": "#2a3237",
+        "border_strong": "#3b454b",
+        "accent": "#4aaca1",
+        "accent_hover": "#60bdb2",
+        "accent_soft": "#17332f",
+        "accent_text": "#79c9bf",
+        "button_text": "#0f1d1b",
+        "success": "#70c7a9",
+        "success_soft": "#1a3029",
+        "warning": "#d8a665",
+        "error": "#ef9292",
+        "error_soft": "#3a2428",
+        "scroll": "#465158",
     },
 }
 
@@ -105,7 +105,7 @@ QPushButton#themeButton {{
     padding: 0;
     color: {color['text_soft']};
     background: transparent;
-    border: 1px solid transparent;
+    border: none;
     border-radius: 9px;
     font-size: 16px;
 }}
@@ -113,7 +113,11 @@ QPushButton#themeButton::menu-indicator {{ image: none; width: 0; }}
 QPushButton#themeButton:hover {{
     color: {color['text']};
     background: {color['surface_hover']};
-    border-color: {color['border']};
+    border: none;
+}}
+QPushButton#themeButton:focus, QPushButton#themeButton:pressed, QPushButton#themeButton:checked {{
+    border: none;
+    outline: none;
 }}
 QMenu {{
     color: {color['text']};
@@ -148,9 +152,14 @@ QLabel#dropIcon {{
     color: {color['accent']};
     background: {color['accent_soft']};
     border: 1px solid {color['border']};
-    border-radius: 25px;
+    border-radius: 22px;
     font-size: 24px;
     font-weight: 500;
+}}
+QLabel#dropIcon[dragActive="true"] {{
+    color: {color['button_text']};
+    background: {color['accent']};
+    border-color: {color['accent']};
 }}
 QLabel#dropTitle {{ color: {color['text']}; font-size: 18px; font-weight: 700; }}
 QPushButton {{
@@ -209,6 +218,7 @@ QCheckBox::indicator:checked {{
     image: url(:/qt-project.org/styles/commonstyle/images/standardbutton-apply-16.png);
 }}
 QFrame#listPanel {{ background: {color['surface_alt']}; border: 1px solid {color['border']}; border-radius: 12px; }}
+QWidget#scrollContent {{ background: transparent; }}
 QFrame#jobRow {{ background: transparent; border-bottom: 1px solid {color['border']}; }}
 QLabel#fileType {{
     color: {color['accent_text']};
@@ -219,24 +229,31 @@ QLabel#fileType {{
 }}
 QLabel#fileName, QLabel#sectionTitle, QLabel#emptyTitle {{ color: {color['text']}; font-weight: 680; }}
 QLabel#sectionMeta {{ color: {color['text_faint']}; font-size: 12px; }}
-QLabel#statusPending {{ color: {color['text_faint']}; }}
-QLabel#statusWorking {{ color: {color['warning']}; }}
-QLabel#statusSuccess {{ color: {color['success']}; }}
-QLabel#statusError {{ color: {color['error']}; }}
-QLabel#noticeSuccess {{
-    color: {color['success']};
+QLabel#statusPending, QLabel#statusWorking, QLabel#statusSuccess, QLabel#statusError {{
+    border-radius: 7px;
+    padding: 1px 6px;
+    font-size: 12px;
+    font-weight: 650;
+}}
+QLabel#statusPending {{ color: {color['text_faint']}; background: {color['surface_hover']}; }}
+QLabel#statusWorking {{ color: {color['warning']}; background: {color['surface_hover']}; }}
+QLabel#statusSuccess {{ color: {color['success']}; background: {color['success_soft']}; }}
+QLabel#statusError {{ color: {color['error']}; background: {color['error_soft']}; }}
+QFrame#noticeFrameSuccess, QFrame#noticeFrameError {{
+    min-height: 38px;
+    border-radius: 9px;
+}}
+QFrame#noticeFrameSuccess {{
     background: {color['success_soft']};
     border: 1px solid {color['border']};
-    border-radius: 8px;
-    padding: 8px 12px;
 }}
-QLabel#noticeError {{
-    color: {color['error']};
+QFrame#noticeFrameError {{
     background: {color['error_soft']};
     border: 1px solid {color['border']};
-    border-radius: 8px;
-    padding: 8px 12px;
 }}
+QFrame#noticeFrameSuccess QLabel#noticeText, QFrame#noticeFrameSuccess QLabel#noticeIcon {{ color: {color['success']}; background: transparent; }}
+QFrame#noticeFrameError QLabel#noticeText, QFrame#noticeFrameError QLabel#noticeIcon {{ color: {color['error']}; background: transparent; }}
+QLabel#noticeIcon {{ font-size: 13px; font-weight: 800; }}
 QProgressBar#batchProgress {{ background: {color['border']}; border: none; border-radius: 2px; }}
 QProgressBar#batchProgress::chunk {{ background: {color['accent']}; border-radius: 2px; }}
 QScrollArea {{ background: transparent; border: 0; }}

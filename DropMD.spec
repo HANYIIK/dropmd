@@ -63,9 +63,9 @@ if sys.platform == "darwin":
         info_plist={
             "CFBundleDevelopmentRegion": "zh_CN",
             "CFBundleDisplayName": "DropMD",
-            "CFBundleGetInfoString": "DropMD 1.2.0 — Document to Markdown converter",
-            "CFBundleShortVersionString": "1.2.0",
-            "CFBundleVersion": "120",
+            "CFBundleGetInfoString": "DropMD 1.2.1 — Document to Markdown converter",
+            "CFBundleShortVersionString": "1.2.1",
+            "CFBundleVersion": "121",
             "LSApplicationCategoryType": "public.app-category.productivity",
             "LSMinimumSystemVersion": "11.0",
             "NSHumanReadableCopyright": "Copyright © 2026 DropMD",

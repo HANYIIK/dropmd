@@ -52,8 +52,8 @@ py -3.12 -m venv .venv
 项目包含 GitHub Actions。推送到 GitHub 后，在 Actions 页面手动运行 `Build installers` 即可下载 Apple 芯片 Mac、Intel Mac 和 Windows 三个安装包；推送 `v1.0.0` 这类标签时还会自动创建 GitHub Release。
 
 ```bash
-git tag v1.2.0
-git push origin v1.2.0
+git tag v1.2.1
+git push origin v1.2.1
 ```
 
 ## 说明

@@ -3,7 +3,7 @@ from pathlib import Path
 from PySide6.QtCore import QSettings
 from PySide6.QtWidgets import QApplication
 
-from dropmd.app import JobRow, MainWindow, system_theme
+from dropmd.app import JobRow, MainWindow, prefers_reduced_motion, system_theme
 
 
 def test_copy_markdown_places_full_content_on_clipboard(qt_app: QApplication, tmp_path: Path):
@@ -50,6 +50,8 @@ def test_completed_row_has_reveal_and_retry_actions(qt_app: QApplication, tmp_pa
 
     row.mark_success(destination)
 
+    assert row.status.minimumWidth() == 0
+    assert row.status.minimumHeight() == 24
     assert row.more_button.isHidden() is False
     assert row.retry_action.isVisible() is False
 
@@ -65,4 +67,50 @@ def test_window_controls_are_available(qt_app: QApplication, tmp_path: Path):
     assert window.title_bar.close_button.accessibleName() == "关闭"
     assert window.title_bar.minimize_button.accessibleName() == "最小化"
     assert window.title_bar.maximize_button.accessibleName() == "最大化"
+    assert window.title_bar.theme_button.focusPolicy().name == "NoFocus"
     window.close()
+
+
+def test_notice_uses_padded_container(qt_app: QApplication, tmp_path: Path):
+    settings = QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat)
+    window = MainWindow("light", settings)
+
+    window._show_notice("已生成 example.md。", success=True)
+
+    margins = window.notice_frame.layout().contentsMargins()
+    assert (margins.left(), margins.top(), margins.right(), margins.bottom()) == (14, 9, 14, 9)
+    assert window.notice_frame.objectName() == "noticeFrameSuccess"
+    window.close()
+
+
+def test_rows_are_top_aligned_without_trailing_stretch(qt_app: QApplication, tmp_path: Path):
+    settings = QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat)
+    window = MainWindow("light", settings)
+
+    assert window.rows_layout.alignment().name == "AlignTop"
+    assert window.rows_layout.count() == 0
+    window.close()
+
+
+def test_default_window_shows_three_history_rows_with_notice(qt_app: QApplication, tmp_path: Path):
+    settings = QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat)
+    window = MainWindow("light", settings)
+    window.resize(920, 760)
+    for index in range(3):
+        row = JobRow(tmp_path / f"项目资料 {index + 1}.docx", animations_enabled=False)
+        window.rows_layout.addWidget(row)
+    window.panel_stack.setCurrentWidget(window.scroll)
+    window._show_notice("已生成 项目资料 3.md。", success=True)
+    window.show()
+    qt_app.processEvents()
+
+    assert window.scroll.viewport().height() >= 3 * 66
+    window.close()
+
+
+def test_reduced_motion_environment_override(monkeypatch):
+    monkeypatch.setenv("DROPMD_REDUCE_MOTION", "1")
+    assert prefers_reduced_motion() is True
+
+    monkeypatch.setenv("DROPMD_REDUCE_MOTION", "0")
+    assert prefers_reduced_motion() is False

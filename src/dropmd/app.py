@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from pathlib import Path
 
-from PySide6.QtCore import QEvent, QObject, QPoint, QRunnable, QSettings, QSize, Qt, QThreadPool, QTimer, QUrl, Signal
+from PySide6.QtCore import QEasingCurve, QEvent, QObject, QPoint, QPropertyAnimation, QRunnable, QSettings, QSize, Qt, QThreadPool, QTimer, QUrl, Signal
 from PySide6.QtGui import QAction, QActionGroup, QColor, QDesktopServices, QDragEnterEvent, QDropEvent, QIcon, QMouseEvent
 from PySide6.QtWidgets import (
     QApplication,
@@ -12,6 +13,7 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QFrame,
     QGraphicsDropShadowEffect,
+    QGraphicsOpacityEffect,
     QHBoxLayout,
     QLabel,
     QMainWindow,
@@ -19,8 +21,8 @@ from PySide6.QtWidgets import (
     QProgressBar,
     QPushButton,
     QScrollArea,
-    QSizeGrip,
     QSizePolicy,
+    QStackedLayout,
     QVBoxLayout,
     QWidget,
 )
@@ -34,6 +36,67 @@ THEME_LABELS = {"system": "跟随系统", "light": "浅色", "dark": "深色"}
 
 def system_theme(application: QApplication) -> str:
     return "dark" if application.styleHints().colorScheme() == Qt.ColorScheme.Dark else "light"
+
+
+def prefers_reduced_motion() -> bool:
+    override = os.environ.get("DROPMD_REDUCE_MOTION")
+    if override is not None:
+        return override.lower() in {"1", "true", "yes"}
+    if os.environ.get("QT_QPA_PLATFORM") == "offscreen":
+        return True
+    if sys.platform == "darwin":
+        try:
+            result = subprocess.run(
+                ["defaults", "read", "com.apple.universalaccess", "reduceMotion"],
+                capture_output=True,
+                timeout=0.3,
+                check=False,
+            )
+            return result.stdout.strip() == b"1"
+        except (OSError, subprocess.SubprocessError):
+            return False
+    if sys.platform == "win32":
+        try:
+            import ctypes
+
+            enabled = ctypes.c_int()
+            ctypes.windll.user32.SystemParametersInfoW(0x1042, 0, ctypes.byref(enabled), 0)
+            return not bool(enabled.value)
+        except (AttributeError, OSError):
+            return False
+    return False
+
+
+def fade_widget(
+    widget: QWidget,
+    *,
+    enabled: bool,
+    start: float = 0.0,
+    end: float = 1.0,
+    duration: int = 220,
+    hide_when_finished: bool = False,
+) -> None:
+    previous = getattr(widget, "_fade_animation", None)
+    if previous:
+        previous.stop()
+    if not enabled:
+        widget.setVisible(not hide_when_finished)
+        return
+    effect = widget.graphicsEffect()
+    if not isinstance(effect, QGraphicsOpacityEffect):
+        effect = QGraphicsOpacityEffect(widget)
+        widget.setGraphicsEffect(effect)
+    effect.setOpacity(start)
+    widget.show()
+    animation = QPropertyAnimation(effect, b"opacity", widget)
+    animation.setDuration(duration)
+    animation.setStartValue(start)
+    animation.setEndValue(end)
+    animation.setEasingCurve(QEasingCurve.Type.OutQuart)
+    if hide_when_finished:
+        animation.finished.connect(widget.hide)
+    widget._fade_animation = animation
+    animation.start()
 
 
 class DesktopApplication(QApplication):
@@ -112,6 +175,8 @@ class TitleBar(QFrame):
         self.theme_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.theme_button.setAccessibleName("外观设置")
         self.theme_button.setToolTip("外观设置")
+        self.theme_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.theme_button.setFlat(True)
 
         self.theme_menu = QMenu(self.theme_button)
         self.theme_group = QActionGroup(self.theme_menu)
@@ -172,22 +237,23 @@ class TitleBar(QFrame):
 class DropZone(QFrame):
     filesDropped = Signal(list)
 
-    def __init__(self):
+    def __init__(self, *, animations_enabled: bool = True):
         super().__init__()
+        self.animations_enabled = animations_enabled
         self.setObjectName("dropZone")
         self.setProperty("dragActive", False)
         self.setAcceptDrops(True)
-        self.setMinimumHeight(210)
+        self.setMinimumHeight(176)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(32, 24, 32, 24)
-        layout.setSpacing(8)
+        layout.setContentsMargins(32, 12, 32, 12)
+        layout.setSpacing(6)
         layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
-        icon = QLabel("↓")
-        icon.setObjectName("dropIcon")
-        icon.setFixedSize(50, 50)
-        icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.icon = QLabel("↓")
+        self.icon.setObjectName("dropIcon")
+        self.icon.setFixedSize(44, 44)
+        self.icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         title = QLabel("将文件拖到这里")
         title.setObjectName("dropTitle")
@@ -202,7 +268,7 @@ class DropZone(QFrame):
         self.choose_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.choose_button.setShortcut("Ctrl+O")
 
-        layout.addWidget(icon, alignment=Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self.icon, alignment=Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(title)
         layout.addWidget(hint)
         layout.addSpacing(6)
@@ -210,8 +276,13 @@ class DropZone(QFrame):
 
     def _set_drag_active(self, active: bool) -> None:
         self.setProperty("dragActive", active)
+        self.icon.setProperty("dragActive", active)
         self.style().unpolish(self)
         self.style().polish(self)
+        self.icon.style().unpolish(self.icon)
+        self.icon.style().polish(self.icon)
+        if active:
+            fade_widget(self.icon, enabled=self.animations_enabled, start=0.38, end=1.0, duration=180)
 
     def dragEnterEvent(self, event: QDragEnterEvent) -> None:
         if event.mimeData().hasUrls() and any(url.isLocalFile() for url in event.mimeData().urls()):
@@ -234,21 +305,22 @@ class JobRow(QFrame):
     copyFailed = Signal(str)
     retryRequested = Signal(object)
 
-    def __init__(self, source: Path):
+    def __init__(self, source: Path, *, animations_enabled: bool = True):
         super().__init__()
+        self.animations_enabled = animations_enabled
         self.source = source
         self.destination: Path | None = None
         self.state = "pending"
         self.setObjectName("jobRow")
-        self.setMinimumHeight(74)
+        self.setFixedHeight(66)
 
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(14, 10, 10, 10)
+        layout.setContentsMargins(14, 7, 10, 7)
         layout.setSpacing(11)
 
         file_icon = QLabel(source.suffix[1:].upper()[:4] or "FILE")
         file_icon.setObjectName("fileType")
-        file_icon.setFixedSize(42, 38)
+        file_icon.setFixedSize(40, 36)
         file_icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         details = QVBoxLayout()
@@ -265,8 +337,8 @@ class JobRow(QFrame):
 
         self.status = QLabel("等待转换")
         self.status.setObjectName("statusPending")
-        self.status.setMinimumWidth(68)
-        self.status.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self.status.setMinimumHeight(24)
+        self.status.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         self.copy_button = QPushButton("复制")
         self.copy_button.setObjectName("copyButton")
@@ -327,6 +399,7 @@ class JobRow(QFrame):
         self.open_button.show()
         self.more_button.show()
         self.retry_action.setVisible(False)
+        fade_widget(self.status, enabled=self.animations_enabled, start=0.25, end=1.0, duration=240)
 
     def mark_error(self, message: str) -> None:
         self.state = "error"
@@ -338,6 +411,7 @@ class JobRow(QFrame):
         self.retry_action.setVisible(True)
         self.more_button.show()
         self._refresh(self.status)
+        fade_widget(self.status, enabled=self.animations_enabled, start=0.25, end=1.0, duration=240)
 
     @staticmethod
     def _format_size(size: int) -> str:
@@ -364,6 +438,7 @@ class JobRow(QFrame):
         self.copy_button.setText("已复制 ✓")
         self.copy_button.setProperty("copied", True)
         self._refresh(self.copy_button)
+        fade_widget(self.copy_button, enabled=self.animations_enabled, start=0.35, end=1.0, duration=180)
         self.markdownCopied.emit(self.destination)
         QTimer.singleShot(1800, self._reset_copy_button)
         return True
@@ -415,6 +490,8 @@ class MainWindow(QMainWindow):
         self.rows: dict[Path, JobRow] = {}
         self.running: set[Path] = set()
         self.auto_copy_sources: set[Path] = set()
+        self.animations_enabled = not prefers_reduced_motion()
+        self._notice_generation = 0
 
         canvas = QWidget()
         canvas.setObjectName("windowCanvas")
@@ -442,11 +519,11 @@ class MainWindow(QMainWindow):
         self.title_bar.themeModeRequested.connect(self.set_theme_mode)
         shell.addWidget(self.title_bar)
 
-        content = QWidget()
-        content_layout = QVBoxLayout(content)
-        content_layout.setContentsMargins(36, 26, 36, 24)
-        content_layout.setSpacing(16)
-        shell.addWidget(content, 1)
+        self.content = QWidget()
+        content_layout = QVBoxLayout(self.content)
+        content_layout.setContentsMargins(36, 20, 36, 16)
+        content_layout.setSpacing(10)
+        shell.addWidget(self.content, 1)
 
         eyebrow = QLabel("DOCUMENT → MARKDOWN")
         eyebrow.setObjectName("eyebrow")
@@ -459,7 +536,7 @@ class MainWindow(QMainWindow):
         content_layout.addWidget(title)
         content_layout.addWidget(subtitle)
 
-        self.drop_zone = DropZone()
+        self.drop_zone = DropZone(animations_enabled=self.animations_enabled)
         self.drop_zone.filesDropped.connect(self.add_files)
         self.drop_zone.choose_button.clicked.connect(self.choose_files)
         content_layout.addWidget(self.drop_zone)
@@ -483,10 +560,22 @@ class MainWindow(QMainWindow):
         preference_layout.addWidget(self.supported_label)
         content_layout.addWidget(preference_bar)
 
+        self.notice_frame = QFrame()
+        self.notice_frame.setObjectName("noticeFrameSuccess")
+        notice_layout = QHBoxLayout(self.notice_frame)
+        notice_layout.setContentsMargins(14, 9, 14, 9)
+        notice_layout.setSpacing(8)
+        self.notice_icon = QLabel("✓")
+        self.notice_icon.setObjectName("noticeIcon")
+        self.notice_icon.setFixedWidth(18)
+        self.notice_icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.notice = QLabel()
+        self.notice.setObjectName("noticeText")
         self.notice.setWordWrap(True)
-        self.notice.hide()
-        content_layout.addWidget(self.notice)
+        notice_layout.addWidget(self.notice_icon)
+        notice_layout.addWidget(self.notice, 1)
+        self.notice_frame.hide()
+        content_layout.addWidget(self.notice_frame)
 
         list_header = QHBoxLayout()
         list_header.setSpacing(10)
@@ -513,13 +602,15 @@ class MainWindow(QMainWindow):
 
         self.list_panel = QFrame()
         self.list_panel.setObjectName("listPanel")
-        panel_layout = QVBoxLayout(self.list_panel)
-        panel_layout.setContentsMargins(0, 0, 0, 0)
-        panel_layout.setSpacing(0)
+        self.panel_stack = QStackedLayout(self.list_panel)
+        self.panel_stack.setContentsMargins(0, 0, 0, 0)
+        self.panel_stack.setStackingMode(QStackedLayout.StackingMode.StackOne)
 
-        empty = QVBoxLayout()
-        empty.setContentsMargins(20, 22, 20, 22)
+        self.empty_state = QWidget()
+        empty = QVBoxLayout(self.empty_state)
+        empty.setContentsMargins(20, 16, 20, 16)
         empty.setSpacing(4)
+        empty.addStretch()
         self.empty_title = QLabel("准备好开始第一次转换")
         self.empty_title.setObjectName("emptyTitle")
         self.empty_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -528,24 +619,25 @@ class MainWindow(QMainWindow):
         self.empty_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
         empty.addWidget(self.empty_title)
         empty.addWidget(self.empty_hint)
-        panel_layout.addLayout(empty)
+        empty.addStretch()
+        self.panel_stack.addWidget(self.empty_state)
 
         self.scroll = QScrollArea()
         self.scroll.setWidgetResizable(True)
-        self.scroll.hide()
+        self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.scroll.setAlignment(Qt.AlignmentFlag.AlignTop)
         self.scroll_content = QWidget()
+        self.scroll_content.setObjectName("scrollContent")
         self.rows_layout = QVBoxLayout(self.scroll_content)
         self.rows_layout.setContentsMargins(0, 0, 0, 0)
         self.rows_layout.setSpacing(0)
-        self.rows_layout.addStretch()
+        self.rows_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
         self.scroll.setWidget(self.scroll_content)
-        panel_layout.addWidget(self.scroll)
+        self.panel_stack.addWidget(self.scroll)
+        self.panel_stack.setCurrentWidget(self.empty_state)
         content_layout.addWidget(self.list_panel, 1)
 
-        footer = QHBoxLayout()
-        footer.addStretch()
-        footer.addWidget(QSizeGrip(self))
-        content_layout.addLayout(footer)
+        QTimer.singleShot(0, lambda: fade_widget(self.content, enabled=self.animations_enabled, start=0.0, end=1.0, duration=360))
 
     def _resolved_theme(self) -> str:
         if self.theme_mode == "system":
@@ -564,6 +656,7 @@ class MainWindow(QMainWindow):
         self.theme = self._resolved_theme()
         QApplication.instance().setStyleSheet(stylesheet(self.theme))
         self.title_bar.set_theme(self.theme_mode, self.theme)
+        fade_widget(self.content, enabled=self.animations_enabled, start=0.72, end=1.0, duration=200)
 
     def system_color_scheme_changed(self) -> None:
         if self.theme_mode == "system":
@@ -611,12 +704,13 @@ class MainWindow(QMainWindow):
                 self.rows_layout.removeWidget(old_row)
                 old_row.deleteLater()
 
-            row = JobRow(source)
+            row = JobRow(source, animations_enabled=self.animations_enabled)
             row.markdownCopied.connect(self._markdown_copied)
             row.copyFailed.connect(lambda message, name=source.name: self._show_notice(f"{name} 复制失败：{message}", success=False))
             row.retryRequested.connect(lambda path: self.add_files([path]))
             self.rows[source] = row
             self.rows_layout.insertWidget(0, row)
+            fade_widget(row, enabled=self.animations_enabled, start=0.0, end=1.0, duration=280)
             self.running.add(source)
             if enable_auto_copy:
                 self.auto_copy_sources.add(source)
@@ -629,9 +723,7 @@ class MainWindow(QMainWindow):
             self.thread_pool.start(worker)
 
         if accepted:
-            self.empty_title.hide()
-            self.empty_hint.hide()
-            self.scroll.show()
+            self.panel_stack.setCurrentWidget(self.scroll)
             self.clear_button.show()
             self._update_summary()
             self._show_notice(f"已加入 {accepted} 个文件，正在转换…", success=True)
@@ -682,12 +774,27 @@ class MainWindow(QMainWindow):
         self._show_notice(f"已复制 {destination.name} 的 Markdown 内容。", success=True)
 
     def _show_notice(self, message: str, *, success: bool) -> None:
+        self._notice_generation += 1
+        generation = self._notice_generation
         self.notice.setText(message)
-        self.notice.setObjectName("noticeSuccess" if success else "noticeError")
-        self.notice.style().unpolish(self.notice)
-        self.notice.style().polish(self.notice)
-        self.notice.show()
-        QTimer.singleShot(4500, self.notice.hide)
+        self.notice_icon.setText("✓" if success else "!")
+        self.notice_frame.setObjectName("noticeFrameSuccess" if success else "noticeFrameError")
+        self.notice_frame.style().unpolish(self.notice_frame)
+        self.notice_frame.style().polish(self.notice_frame)
+        fade_widget(self.notice_frame, enabled=self.animations_enabled, start=0.0, end=1.0, duration=220)
+        QTimer.singleShot(4200, lambda: self._hide_notice(generation))
+
+    def _hide_notice(self, generation: int) -> None:
+        if generation != self._notice_generation or not self.notice_frame.isVisible():
+            return
+        fade_widget(
+            self.notice_frame,
+            enabled=self.animations_enabled,
+            start=1.0,
+            end=0.0,
+            duration=160,
+            hide_when_finished=True,
+        )
 
     def clear_finished(self) -> None:
         for source, row in list(self.rows.items()):
@@ -696,9 +803,7 @@ class MainWindow(QMainWindow):
                 self.rows_layout.removeWidget(row)
                 row.deleteLater()
         if not self.rows:
-            self.scroll.hide()
-            self.empty_title.show()
-            self.empty_hint.show()
+            self.panel_stack.setCurrentWidget(self.empty_state)
             self.clear_button.hide()
         self._update_summary()
 
@@ -732,7 +837,7 @@ def main() -> int:
     application = DesktopApplication(sys.argv)
     application.setApplicationName("DropMD")
     application.setApplicationDisplayName("DropMD")
-    application.setApplicationVersion("1.2.0")
+    application.setApplicationVersion("1.2.1")
     application.setOrganizationName("DropMD")
     application.setOrganizationDomain("dropmd.app")
     application.setDesktopFileName("com.dropmd.desktop")
