@@ -6,7 +6,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Protocol
 
-from markitdown import MarkItDown
+from dropmd_markitdown import MarkItDown
 
 
 SUPPORTED_EXTENSIONS = {

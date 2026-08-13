@@ -11,12 +11,12 @@ datas = [
 ]
 hiddenimports = []
 
-for package in ("markitdown", "magika", "mammoth"):
+for package in ("magika", "mammoth"):
     package_datas, package_binaries, package_hiddenimports = collect_all(package)
     datas += package_datas
     hiddenimports += package_hiddenimports
 
-hiddenimports += collect_submodules("markitdown.converters")
+hiddenimports += collect_submodules("dropmd_markitdown.converters")
 icon = root / "assets" / ("icon.icns" if sys.platform == "darwin" else "icon.ico")
 
 a = Analysis(
@@ -28,7 +28,10 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=["tkinter", "matplotlib", "IPython", "pytest", "pygments"],
+    excludes=[
+        "tkinter", "matplotlib", "IPython", "pytest", "pygments",
+        "PyQt5", "PyQt6", "PySide2",
+    ],
     noarchive=False,
 )
 pyz = PYZ(a.pure)
@@ -63,9 +66,9 @@ if sys.platform == "darwin":
         info_plist={
             "CFBundleDevelopmentRegion": "zh_CN",
             "CFBundleDisplayName": "DropMD",
-            "CFBundleGetInfoString": "DropMD 1.2.2 — Document to Markdown converter",
-            "CFBundleShortVersionString": "1.2.2",
-            "CFBundleVersion": "122",
+            "CFBundleGetInfoString": "DropMD 1.3.0 — Document to Markdown converter",
+            "CFBundleShortVersionString": "1.3.0",
+            "CFBundleVersion": "130",
             "LSApplicationCategoryType": "public.app-category.productivity",
             "LSMinimumSystemVersion": "11.0",
             "NSHumanReadableCopyright": "Copyright © 2026 DropMD",

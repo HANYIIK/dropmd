@@ -1,6 +1,6 @@
 # Third-party notices
 
-DropMD includes [Microsoft MarkItDown](https://github.com/microsoft/markitdown), licensed under the MIT License.
+DropMD includes modified source code from [Microsoft MarkItDown](https://github.com/microsoft/markitdown), licensed under the MIT License.
 
 Copyright (c) Microsoft Corporation.
 

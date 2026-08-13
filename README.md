@@ -1,6 +1,6 @@
 # DropMD
 
-把本地文件拖进桌面应用，DropMD 会通过 Microsoft MarkItDown 在原文件目录生成同名 `.md` 文件。转换完全在本机完成，不需要安装 Python，也不会上传文件。
+把本地文件拖进桌面应用，DropMD 会在原文件目录生成同名 `.md` 文件。转换完全在本机完成，不需要安装 Python，也不会上传文件。
 
 ## 支持格式
 
@@ -52,13 +52,13 @@ py -3.12 -m venv .venv
 项目包含 GitHub Actions。推送到 GitHub 后，在 Actions 页面手动运行 `Build installers` 即可下载 Apple 芯片 Mac、Intel Mac 和 Windows 三个安装包；推送 `v1.0.0` 这类标签时还会自动创建 GitHub Release。
 
 ```bash
-git tag v1.2.2
-git push origin v1.2.2
+git tag v1.3.0
+git push origin v1.3.0
 ```
 
 ## 说明
 
-DropMD 使用 MarkItDown 的 Python API，不会调用外部 `markitdown` 命令。安装包会包含 Python 运行时、Qt 和转换依赖，因此用户无需另行配置环境。
+DropMD 内置了基于 Microsoft MarkItDown 0.1.7 修改的转换源码，不会调用外部 `markitdown` 命令，也不再依赖用户安装 MarkItDown。XLSX 转换会展开合并单元格表达的层级、保留文本编号与工作表结构，并提示源文件中的重复编号；安装包包含 Python 运行时、Qt 和全部转换依赖。
 
 默认外观跟随系统，也可在标题栏右侧固定为浅色或深色。转换完成后可复制 Markdown、打开文件、在文件夹中显示或复制文件路径；还可选择在单个文件转换完成后自动复制。
 
