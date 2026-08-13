@@ -11,4 +11,8 @@ if (-not (Test-Path $Iscc)) {
     throw "Inno Setup 6 is required: https://jrsoftware.org/isdl.php"
 }
 & $Iscc packaging/windows/installer.iss
+$Installer = Join-Path $ProjectDir "release\DropMD-Windows-Setup.exe"
+if (-not (Test-Path $Installer)) {
+    throw "Windows installer was not created."
+}
 Write-Host "Created release/DropMD-Windows-Setup.exe"

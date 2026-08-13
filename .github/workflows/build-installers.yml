@@ -2,12 +2,23 @@ name: Build installers
 
 on:
   workflow_dispatch:
+    inputs:
+      target:
+        description: Build target
+        required: true
+        default: all
+        type: choice
+        options:
+          - all
+          - macos
+          - windows
   push:
     tags:
       - "v*"
 
 jobs:
   macos:
+    if: github.event_name != 'workflow_dispatch' || inputs.target == 'all' || inputs.target == 'macos'
     strategy:
       matrix:
         include:
@@ -29,6 +40,7 @@ jobs:
           path: release/DropMD-macOS-${{ matrix.architecture }}.dmg
 
   windows:
+    if: github.event_name != 'workflow_dispatch' || inputs.target == 'all' || inputs.target == 'windows'
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
