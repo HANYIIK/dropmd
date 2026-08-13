@@ -230,8 +230,8 @@ QLabel#fileType {{
 QLabel#fileName, QLabel#sectionTitle, QLabel#emptyTitle {{ color: {color['text']}; font-weight: 680; }}
 QLabel#sectionMeta {{ color: {color['text_faint']}; font-size: 12px; }}
 QLabel#statusPending, QLabel#statusWorking, QLabel#statusSuccess, QLabel#statusError {{
-    border-radius: 7px;
-    padding: 1px 6px;
+    border-radius: 6px;
+    padding: 0 6px;
     font-size: 12px;
     font-weight: 650;
 }}

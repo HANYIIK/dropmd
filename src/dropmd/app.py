@@ -79,13 +79,14 @@ def fade_widget(
     previous = getattr(widget, "_fade_animation", None)
     if previous:
         previous.stop()
+    previous_effect = widget.graphicsEffect()
+    if isinstance(previous_effect, QGraphicsOpacityEffect):
+        widget.setGraphicsEffect(None)
     if not enabled:
         widget.setVisible(not hide_when_finished)
         return
-    effect = widget.graphicsEffect()
-    if not isinstance(effect, QGraphicsOpacityEffect):
-        effect = QGraphicsOpacityEffect(widget)
-        widget.setGraphicsEffect(effect)
+    effect = QGraphicsOpacityEffect(widget)
+    widget.setGraphicsEffect(effect)
     effect.setOpacity(start)
     widget.show()
     animation = QPropertyAnimation(effect, b"opacity", widget)
@@ -93,8 +94,14 @@ def fade_widget(
     animation.setStartValue(start)
     animation.setEndValue(end)
     animation.setEasingCurve(QEasingCurve.Type.OutQuart)
-    if hide_when_finished:
-        animation.finished.connect(widget.hide)
+    def finish() -> None:
+        if hide_when_finished:
+            widget.hide()
+        if widget.graphicsEffect() is effect:
+            widget.setGraphicsEffect(None)
+        widget._fade_animation = None
+
+    animation.finished.connect(finish)
     widget._fade_animation = animation
     animation.start()
 
@@ -243,7 +250,7 @@ class DropZone(QFrame):
         self.setObjectName("dropZone")
         self.setProperty("dragActive", False)
         self.setAcceptDrops(True)
-        self.setMinimumHeight(176)
+        self.setFixedHeight(176)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(32, 12, 32, 12)
@@ -337,7 +344,7 @@ class JobRow(QFrame):
 
         self.status = QLabel("等待转换")
         self.status.setObjectName("statusPending")
-        self.status.setMinimumHeight(24)
+        self.status.setFixedHeight(24)
         self.status.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         self.copy_button = QPushButton("复制")
@@ -399,7 +406,6 @@ class JobRow(QFrame):
         self.open_button.show()
         self.more_button.show()
         self.retry_action.setVisible(False)
-        fade_widget(self.status, enabled=self.animations_enabled, start=0.25, end=1.0, duration=240)
 
     def mark_error(self, message: str) -> None:
         self.state = "error"
@@ -411,7 +417,6 @@ class JobRow(QFrame):
         self.retry_action.setVisible(True)
         self.more_button.show()
         self._refresh(self.status)
-        fade_widget(self.status, enabled=self.animations_enabled, start=0.25, end=1.0, duration=240)
 
     @staticmethod
     def _format_size(size: int) -> str:
@@ -438,7 +443,6 @@ class JobRow(QFrame):
         self.copy_button.setText("已复制 ✓")
         self.copy_button.setProperty("copied", True)
         self._refresh(self.copy_button)
-        fade_widget(self.copy_button, enabled=self.animations_enabled, start=0.35, end=1.0, duration=180)
         self.markdownCopied.emit(self.destination)
         QTimer.singleShot(1800, self._reset_copy_button)
         return True
@@ -637,8 +641,6 @@ class MainWindow(QMainWindow):
         self.panel_stack.setCurrentWidget(self.empty_state)
         content_layout.addWidget(self.list_panel, 1)
 
-        QTimer.singleShot(0, lambda: fade_widget(self.content, enabled=self.animations_enabled, start=0.0, end=1.0, duration=360))
-
     def _resolved_theme(self) -> str:
         if self.theme_mode == "system":
             application = QApplication.instance()
@@ -656,7 +658,6 @@ class MainWindow(QMainWindow):
         self.theme = self._resolved_theme()
         QApplication.instance().setStyleSheet(stylesheet(self.theme))
         self.title_bar.set_theme(self.theme_mode, self.theme)
-        fade_widget(self.content, enabled=self.animations_enabled, start=0.72, end=1.0, duration=200)
 
     def system_color_scheme_changed(self) -> None:
         if self.theme_mode == "system":
@@ -710,7 +711,6 @@ class MainWindow(QMainWindow):
             row.retryRequested.connect(lambda path: self.add_files([path]))
             self.rows[source] = row
             self.rows_layout.insertWidget(0, row)
-            fade_widget(row, enabled=self.animations_enabled, start=0.0, end=1.0, duration=280)
             self.running.add(source)
             if enable_auto_copy:
                 self.auto_copy_sources.add(source)
@@ -781,20 +781,18 @@ class MainWindow(QMainWindow):
         self.notice_frame.setObjectName("noticeFrameSuccess" if success else "noticeFrameError")
         self.notice_frame.style().unpolish(self.notice_frame)
         self.notice_frame.style().polish(self.notice_frame)
-        fade_widget(self.notice_frame, enabled=self.animations_enabled, start=0.0, end=1.0, duration=220)
+        self.notice_frame.show()
         QTimer.singleShot(4200, lambda: self._hide_notice(generation))
 
     def _hide_notice(self, generation: int) -> None:
         if generation != self._notice_generation or not self.notice_frame.isVisible():
             return
-        fade_widget(
-            self.notice_frame,
-            enabled=self.animations_enabled,
-            start=1.0,
-            end=0.0,
-            duration=160,
-            hide_when_finished=True,
-        )
+        animation = getattr(self.notice_frame, "_fade_animation", None)
+        if animation:
+            animation.stop()
+        if isinstance(self.notice_frame.graphicsEffect(), QGraphicsOpacityEffect):
+            self.notice_frame.setGraphicsEffect(None)
+        self.notice_frame.hide()
 
     def clear_finished(self) -> None:
         for source, row in list(self.rows.items()):
@@ -837,7 +835,7 @@ def main() -> int:
     application = DesktopApplication(sys.argv)
     application.setApplicationName("DropMD")
     application.setApplicationDisplayName("DropMD")
-    application.setApplicationVersion("1.2.1")
+    application.setApplicationVersion("1.2.2")
     application.setOrganizationName("DropMD")
     application.setOrganizationDomain("dropmd.app")
     application.setDesktopFileName("com.dropmd.desktop")

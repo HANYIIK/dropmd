@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from PySide6.QtCore import QSettings
+from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
 from dropmd.app import JobRow, MainWindow, prefers_reduced_motion, system_theme
@@ -52,6 +53,7 @@ def test_completed_row_has_reveal_and_retry_actions(qt_app: QApplication, tmp_pa
 
     assert row.status.minimumWidth() == 0
     assert row.status.minimumHeight() == 24
+    assert row.status.maximumHeight() == 24
     assert row.more_button.isHidden() is False
     assert row.retry_action.isVisible() is False
 
@@ -83,6 +85,21 @@ def test_notice_uses_padded_container(qt_app: QApplication, tmp_path: Path):
     window.close()
 
 
+def test_notice_animation_cleans_up_and_hides_without_layout_gap(qt_app: QApplication, tmp_path: Path):
+    settings = QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat)
+    window = MainWindow("light", settings)
+    window.animations_enabled = True
+    window.show()
+
+    window._show_notice("已生成 example.md。", success=True)
+
+    assert window.notice_frame.graphicsEffect() is None
+    window._hide_notice(window._notice_generation)
+    assert window.notice_frame.isHidden()
+    assert window.notice_frame.graphicsEffect() is None
+    window.close()
+
+
 def test_rows_are_top_aligned_without_trailing_stretch(qt_app: QApplication, tmp_path: Path):
     settings = QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat)
     window = MainWindow("light", settings)
@@ -90,6 +107,26 @@ def test_rows_are_top_aligned_without_trailing_stretch(qt_app: QApplication, tmp
     assert window.rows_layout.alignment().name == "AlignTop"
     assert window.rows_layout.count() == 0
     window.close()
+
+
+def test_completed_row_animation_never_hides_controls(qt_app: QApplication, tmp_path: Path):
+    source = tmp_path / "示例.docx"
+    destination = tmp_path / "示例.md"
+    destination.write_text("# Done\n", encoding="utf-8")
+    row = JobRow(source, animations_enabled=True)
+    row.show()
+
+    row.mark_success(destination)
+    QTest.qWait(280)
+
+    assert row.graphicsEffect() is None
+    assert row.status.graphicsEffect() is None
+    assert row.status.isVisible()
+    assert row.copy_button.isVisible()
+    assert row.open_button.isVisible()
+    assert row.more_button.isVisible()
+    assert row.status.height() == 24
+    row.close()
 
 
 def test_default_window_shows_three_history_rows_with_notice(qt_app: QApplication, tmp_path: Path):
@@ -105,6 +142,18 @@ def test_default_window_shows_three_history_rows_with_notice(qt_app: QApplicatio
     qt_app.processEvents()
 
     assert window.scroll.viewport().height() >= 3 * 66
+    window.close()
+
+
+def test_tall_window_keeps_compact_drop_zone_and_expands_history(qt_app: QApplication, tmp_path: Path):
+    settings = QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat)
+    window = MainWindow("light", settings)
+    window.resize(1100, 900)
+    window.show()
+    qt_app.processEvents()
+
+    assert window.drop_zone.height() == 176
+    assert window.list_panel.height() >= 320
     window.close()
 
 
