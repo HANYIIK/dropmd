@@ -1,6 +1,8 @@
 from pathlib import Path
 from copy import copy
+import re
 from types import SimpleNamespace
+from zipfile import ZIP_DEFLATED, ZipFile
 
 import pytest
 from openpyxl import Workbook
@@ -11,6 +13,21 @@ from dropmd.converter import OutputExistsError, UnsupportedFileError, convert_fi
 class FakeConverter:
     def convert(self, source: Path):
         return SimpleNamespace(markdown=f"# {source.stem}\n\n转换成功")
+
+
+def set_formula_cache(source: Path, coordinate: str, value: str) -> None:
+    patched = source.with_name(f"{source.stem}-cached.xlsx")
+    with ZipFile(source) as original, ZipFile(patched, "w", ZIP_DEFLATED) as updated:
+        for item in original.infolist():
+            data = original.read(item.filename)
+            if item.filename == "xl/worksheets/sheet1.xml":
+                xml = data.decode("utf-8")
+                pattern = rf'(<c r="{re.escape(coordinate)}"[^>]*><f>.*?</f><v>).*?(</v>)'
+                xml, count = re.subn(pattern, rf"\g<1>{value}\g<2>", xml, count=1)
+                assert count == 1
+                data = xml.encode("utf-8")
+            updated.writestr(item, data)
+    patched.replace(source)
 
 
 def test_output_path_keeps_the_original_stem(tmp_path: Path):
@@ -53,8 +70,8 @@ def test_xlsx_preserves_merged_hierarchy_and_text_identifiers(tmp_path: Path):
     workbook = Workbook()
     sheet = workbook.active
     sheet.title = "功能清单"
-    sheet.append(["功能模块", "编号", "功能项", "说明"])
-    sheet.append(["数据建模", "1.1", "多模型管理", "第一项"])
+    sheet.append(["功能模块", "编号", "功能项", "说明\n（原文）"])
+    sheet.append(["数据建模", "1.1", "多模型管理", "第一项\n补充说明"])
     sheet.append([None, "1.2", "模型生命周期", "第二项"])
     sheet.append([None, "1.10", "敏感字段标识", "第十项"])
     sheet.merge_cells("A2:A4")
@@ -63,12 +80,14 @@ def test_xlsx_preserves_merged_hierarchy_and_text_identifiers(tmp_path: Path):
     destination = convert_file(source)
     markdown = destination.read_text(encoding="utf-8")
 
-    assert "| 数据建模 | 1.1 | 多模型管理 | 第一项 |" in markdown
+    assert "| 功能模块 | 编号 | 功能项 | 说明 （原文） |" in markdown
+    assert "| 数据建模 | 1.1 | 多模型管理 | 第一项； 补充说明 |" in markdown
     assert "| 数据建模 | 1.2 | 模型生命周期 | 第二项 |" in markdown
     assert "| 数据建模 | 1.10 | 敏感字段标识 | 第十项 |" in markdown
     assert "1.20" not in markdown
     assert "NaN" not in markdown
     assert "Unnamed:" not in markdown
+    assert "<br>" not in markdown
 
 
 def test_xlsx_renders_horizontal_merges_as_sections_and_notes(tmp_path: Path):
@@ -92,6 +111,34 @@ def test_xlsx_renders_horizontal_merges_as_sections_and_notes(tmp_path: Path):
     assert "| 1 | 标品 | 100 | 基础能力 |" in markdown
     assert "### 说明" in markdown
     assert "> 报价不含第三方软件许可。" in markdown
+
+
+def test_xlsx_folds_merge_only_rows_without_filling_unmerged_identifiers(tmp_path: Path):
+    source = tmp_path / "合并延续行.xlsx"
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "功能清单"
+    sheet.append(["编号", "一级", "二级", "功能", "说明"])
+    sheet.append([67, "AI组件", "效率工具", "全网简历搜索", "搜索所有渠道"])
+    sheet.append([None, None, None, None, None])
+    for column in "ABCDE":
+        sheet.merge_cells(f"{column}2:{column}3")
+    sheet.append([68, "AI组件", "效率工具", "全天候人才跟盯", "自动通知"])
+    sheet.append([52, "招聘结果", "报表", "BI系统集成", "第一项"])
+    sheet.append([None, None, None, "内建报表", "第二项"])
+    for column in "ABC":
+        sheet.merge_cells(f"{column}5:{column}6")
+    sheet.append([None, "其他", "配置", "未编号", "第三项"])
+    workbook.save(source)
+
+    markdown = convert_file(source).read_text(encoding="utf-8")
+
+    assert markdown.count("| 67 | AI组件 | 效率工具 | 全网简历搜索 | 搜索所有渠道 |") == 1
+    assert "| 68 | AI组件 | 效率工具 | 全天候人才跟盯 | 自动通知 |" in markdown
+    assert "| 52 | 招聘结果 | 报表 | BI系统集成 | 第一项 |" in markdown
+    assert "| 52 | 招聘结果 | 报表 | 内建报表 | 第二项 |" in markdown
+    assert "|  | 其他 | 配置 | 未编号 | 第三项 |" in markdown
+    assert "已折叠 1 个仅用于合并单元格排版的延续行（源表第 3 行）" in markdown
 
 
 def test_xlsx_warns_only_for_duplicate_source_identifiers_within_a_section(tmp_path: Path):
@@ -126,3 +173,30 @@ def test_xlsx_ignores_styled_empty_tail(tmp_path: Path):
     assert "| 名称 | 金额 |" in markdown
     assert "列 H" not in markdown
     assert markdown.count("| 项目 | 100 |") == 1
+
+
+def test_xlsx_emits_workbook_semantics_and_formula_provenance(tmp_path: Path):
+    source = tmp_path / "语义报价.xlsx"
+    workbook = Workbook()
+    summary = workbook.active
+    summary.title = "报价汇总"
+    summary.append(["项目", "金额"])
+    summary.append(["合计", "=SUM(B3:B4)"])
+    summary.append(["一期", 10])
+    summary.append(["二期", 20])
+    details = workbook.create_sheet("隐藏明细")
+    details.append(["编号", "说明"])
+    details.append(["1.10", "保留显示编号"])
+    details.sheet_state = "hidden"
+    workbook.save(source)
+    set_formula_cache(source, "B2", "30")
+
+    markdown = convert_file(source).read_text(encoding="utf-8")
+
+    assert markdown.startswith("# 语义报价\n")
+    assert "2 个工作表（1 个可见，1 个隐藏）" in markdown
+    assert "1 个公式单元格" in markdown
+    assert "- `报价汇总`：区域 `A1:B4`；可见；1 个公式" in markdown
+    assert "> **源表提示：** 原工作表为隐藏状态。" in markdown
+    assert "| **合计** | **30** |" in markdown
+    assert "- `B2`：`=SUM(B3:B4)` → `30`" in markdown

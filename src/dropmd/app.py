@@ -835,7 +835,7 @@ def main() -> int:
     application = DesktopApplication(sys.argv)
     application.setApplicationName("DropMD")
     application.setApplicationDisplayName("DropMD")
-    application.setApplicationVersion("1.3.0")
+    application.setApplicationVersion("1.4.0")
     application.setOrganizationName("DropMD")
     application.setOrganizationDomain("dropmd.app")
     application.setDesktopFileName("com.dropmd.desktop")
