@@ -52,13 +52,13 @@ py -3.12 -m venv .venv
 项目包含 GitHub Actions。推送到 GitHub 后，在 Actions 页面手动运行 `Build installers` 即可下载 Apple 芯片 Mac、Intel Mac 和 Windows 三个安装包；推送 `v1.0.0` 这类标签时还会自动创建 GitHub Release。
 
 ```bash
-git tag v1.4.0
-git push origin v1.4.0
+git tag v1.5.0
+git push origin v1.5.0
 ```
 
 ## 说明
 
-DropMD 内置了基于 Microsoft MarkItDown 0.1.7 修改的转换源码，不会调用外部 `markitdown` 命令，也不再依赖用户安装 MarkItDown。XLSX 转换会展开合并单元格表达的层级、保留文本编号与工作表结构，并提示源文件中的重复编号；安装包包含 Python 运行时、Qt 和全部转换依赖。
+DropMD 内置了基于 Microsoft MarkItDown 0.1.7 修改的转换源码，不会调用外部 `markitdown` 命令，也不再依赖用户安装 MarkItDown。XLSX 转换会展开合并单元格表达的层级、保留文本编号与工作表结构，把单元格内的编号和项目符号列表转换成可追踪的 Markdown 层级，并生成语义转换完整性摘要；前台可按需勾选“Excel 保留颜色”，用近似颜色 Emoji 标记单元格并附上精确十六进制颜色图例，默认关闭且不推断颜色含义。安装包包含 Python 运行时、Qt 和全部转换依赖。
 
 默认外观跟随系统，也可在标题栏右侧固定为浅色或深色。转换完成后可复制 Markdown、打开文件、在文件夹中显示或复制文件路径；还可选择在单个文件转换完成后自动复制。
 

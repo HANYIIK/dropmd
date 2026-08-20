@@ -4,7 +4,7 @@ from PySide6.QtCore import QSettings
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
-from dropmd.app import JobRow, MainWindow, prefers_reduced_motion, system_theme
+from dropmd.app import ConversionWorker, JobRow, MainWindow, prefers_reduced_motion, system_theme
 
 
 def test_copy_markdown_places_full_content_on_clipboard(qt_app: QApplication, tmp_path: Path):
@@ -41,6 +41,50 @@ def test_system_theme_is_default_and_resolved(qt_app: QApplication, tmp_path: Pa
     assert window.theme == system_theme(qt_app)
     assert window.title_bar.theme_actions["system"].isChecked()
     window.close()
+
+
+def test_excel_color_option_is_front_facing_off_by_default_and_persisted(
+    qt_app: QApplication, tmp_path: Path
+):
+    settings = QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat)
+    window = MainWindow("system", settings)
+
+    assert window.preserve_excel_colors.text() == "Excel 保留颜色"
+    assert window.preserve_excel_colors.isChecked() is False
+    assert window.preserve_excel_colors.accessibleName() == "Excel 保留单元格颜色"
+    assert "仅适用于 XLSX" in window.preserve_excel_colors.toolTip()
+
+    window.preserve_excel_colors.setChecked(True)
+
+    assert settings.value("preserve_excel_colors", type=bool) is True
+    window.close()
+
+    restored = MainWindow("system", settings)
+    assert restored.preserve_excel_colors.isChecked() is True
+    restored.close()
+
+
+def test_conversion_worker_uses_the_front_facing_excel_color_snapshot(
+    qt_app: QApplication, tmp_path: Path, monkeypatch
+):
+    source = tmp_path / "颜色.xlsx"
+    destination = tmp_path / "颜色.md"
+    captured: dict[str, object] = {}
+
+    def fake_convert(path: Path, **kwargs: object) -> Path:
+        captured["path"] = path
+        captured.update(kwargs)
+        return destination
+
+    monkeypatch.setattr("dropmd.app.convert_file", fake_convert)
+
+    ConversionWorker(source, overwrite=False, preserve_excel_colors=True).run()
+
+    assert captured == {
+        "path": source,
+        "overwrite": False,
+        "preserve_excel_colors": True,
+    }
 
 
 def test_completed_row_has_reveal_and_retry_actions(qt_app: QApplication, tmp_path: Path):

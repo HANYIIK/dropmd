@@ -138,16 +138,21 @@ class WorkerSignals(QObject):
 
 
 class ConversionWorker(QRunnable):
-    def __init__(self, source: Path, overwrite: bool):
+    def __init__(self, source: Path, overwrite: bool, preserve_excel_colors: bool = False):
         super().__init__()
         self.source = source
         self.overwrite = overwrite
+        self.preserve_excel_colors = preserve_excel_colors
         self.signals = WorkerSignals()
 
     def run(self) -> None:
         self.signals.started.emit(self.source)
         try:
-            destination = convert_file(self.source, overwrite=self.overwrite)
+            destination = convert_file(
+                self.source,
+                overwrite=self.overwrite,
+                preserve_excel_colors=self.preserve_excel_colors,
+            )
         except Exception as error:
             message = str(error).strip() or error.__class__.__name__
             self.signals.failed.emit(self.source, message)
@@ -553,12 +558,24 @@ class MainWindow(QMainWindow):
         self.overwrite = QCheckBox("覆盖已有同名文件")
         self.overwrite.setChecked(self.settings.value("overwrite", True, type=bool))
         self.overwrite.toggled.connect(lambda value: self.settings.setValue("overwrite", value))
+        self.preserve_excel_colors = QCheckBox("Excel 保留颜色")
+        self.preserve_excel_colors.setChecked(
+            self.settings.value("preserve_excel_colors", False, type=bool)
+        )
+        self.preserve_excel_colors.setToolTip(
+            "仅适用于 XLSX：用颜色符号标记非空单元格，并附上精确十六进制颜色图例"
+        )
+        self.preserve_excel_colors.setAccessibleName("Excel 保留单元格颜色")
+        self.preserve_excel_colors.toggled.connect(
+            lambda value: self.settings.setValue("preserve_excel_colors", value)
+        )
         self.auto_copy = QCheckBox("单个文件完成后自动复制")
         self.auto_copy.setChecked(self.settings.value("auto_copy", False, type=bool))
         self.auto_copy.toggled.connect(lambda value: self.settings.setValue("auto_copy", value))
         self.supported_label = QLabel("DOCX · PDF · PPTX · XLSX · HTML · CSV · TXT")
         self.supported_label.setObjectName("caption")
         preference_layout.addWidget(self.overwrite)
+        preference_layout.addWidget(self.preserve_excel_colors)
         preference_layout.addWidget(self.auto_copy)
         preference_layout.addStretch()
         preference_layout.addWidget(self.supported_label)
@@ -716,7 +733,11 @@ class MainWindow(QMainWindow):
                 self.auto_copy_sources.add(source)
             accepted += 1
 
-            worker = ConversionWorker(source, self.overwrite.isChecked())
+            worker = ConversionWorker(
+                source,
+                self.overwrite.isChecked(),
+                self.preserve_excel_colors.isChecked(),
+            )
             worker.signals.started.connect(lambda path, item=row: item.mark_working())
             worker.signals.succeeded.connect(self._conversion_succeeded)
             worker.signals.failed.connect(self._conversion_failed)
@@ -835,7 +856,7 @@ def main() -> int:
     application = DesktopApplication(sys.argv)
     application.setApplicationName("DropMD")
     application.setApplicationDisplayName("DropMD")
-    application.setApplicationVersion("1.4.0")
+    application.setApplicationVersion("1.5.0")
     application.setOrganizationName("DropMD")
     application.setOrganizationDomain("dropmd.app")
     application.setDesktopFileName("com.dropmd.desktop")

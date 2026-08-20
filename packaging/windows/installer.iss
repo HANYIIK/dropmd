@@ -1,5 +1,5 @@
 #define AppName "DropMD"
-#define AppVersion "1.4.0"
+#define AppVersion "1.5.0"
 #define AppPublisher "DropMD"
 #define AppExeName "DropMD.exe"
 

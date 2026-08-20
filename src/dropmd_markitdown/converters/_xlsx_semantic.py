@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import colorsys
 import re
+import xml.etree.ElementTree as ElementTree
 from dataclasses import dataclass
 from datetime import date, datetime, time
 from decimal import Decimal
@@ -91,6 +93,7 @@ class SemanticCell:
     comment: str | None
     comment_author: str | None
     is_bold: bool
+    fill_rgb: str | None
 
     @property
     def has_cached_value(self) -> bool:
@@ -165,8 +168,95 @@ class SemanticWorkbook:
     def formula_count(self) -> int:
         return sum(len(sheet.formula_cells) for sheet in self.sheets)
 
+    @property
+    def fill_colors(self) -> tuple[str, ...]:
+        colors: list[str] = []
+        seen: set[str] = set()
+        for sheet in self.sheets:
+            for cell in sorted(sheet.cells.values(), key=lambda item: (item.row, item.column)):
+                if cell.display_value and cell.fill_rgb and cell.fill_rgb not in seen:
+                    seen.add(cell.fill_rgb)
+                    colors.append(cell.fill_rgb)
+        return tuple(colors)
 
-def _sheet_cells(sheet: Any, cached_sheet: Any) -> dict[tuple[int, int], SemanticCell]:
+
+def _normalize_rgb(value: Any) -> str | None:
+    text = str(value or "").strip().lstrip("#").upper()
+    if len(text) == 8:
+        text = text[-6:]
+    if len(text) != 6 or not re.fullmatch(r"[0-9A-F]{6}", text):
+        return None
+    return f"#{text}"
+
+
+def _theme_colors(workbook: Any) -> tuple[str, ...]:
+    theme = getattr(workbook, "loaded_theme", None)
+    if not theme:
+        return ()
+    try:
+        root = ElementTree.fromstring(theme)
+        scheme = root.find(".//{http://schemas.openxmlformats.org/drawingml/2006/main}clrScheme")
+    except (ElementTree.ParseError, TypeError, ValueError):
+        return ()
+    if scheme is None:
+        return ()
+    colors: list[str] = []
+    for entry in scheme:
+        color_node = next(iter(entry), None)
+        value = None if color_node is None else color_node.attrib.get("lastClr") or color_node.attrib.get("val")
+        normalized = _normalize_rgb(value)
+        if normalized:
+            colors.append(normalized)
+    return tuple(colors)
+
+
+def _apply_tint(rgb: str, tint: float) -> str:
+    if not tint:
+        return rgb
+    red, green, blue = (int(rgb[index : index + 2], 16) / 255 for index in (1, 3, 5))
+    hue, lightness, saturation = colorsys.rgb_to_hls(red, green, blue)
+    if tint < 0:
+        lightness *= 1 + tint
+    else:
+        lightness = lightness * (1 - tint) + tint
+    tinted = colorsys.hls_to_rgb(hue, max(0.0, min(1.0, lightness)), saturation)
+    return "#" + "".join(f"{round(channel * 255):02X}" for channel in tinted)
+
+
+def _resolve_fill_rgb(cell: Any, theme_colors: tuple[str, ...]) -> str | None:
+    fill = getattr(cell, "fill", None)
+    if fill is None or getattr(fill, "fill_type", None) != "solid":
+        return None
+    color = getattr(fill, "fgColor", None)
+    if color is None:
+        return None
+    color_type = getattr(color, "type", None)
+    resolved: str | None = None
+    if color_type == "rgb":
+        resolved = _normalize_rgb(getattr(color, "rgb", None))
+    elif color_type == "theme":
+        theme_index = getattr(color, "theme", None)
+        if isinstance(theme_index, int) and 0 <= theme_index < len(theme_colors):
+            resolved = theme_colors[theme_index]
+    elif color_type == "indexed":
+        indexed = getattr(color, "indexed", None)
+        try:
+            from openpyxl.styles.colors import COLOR_INDEX
+
+            if isinstance(indexed, int) and 0 <= indexed < len(COLOR_INDEX):
+                resolved = _normalize_rgb(COLOR_INDEX[indexed])
+        except ImportError:
+            resolved = None
+    if resolved is None:
+        return None
+    return _apply_tint(resolved, float(getattr(color, "tint", 0.0) or 0.0))
+
+
+def _sheet_cells(
+    sheet: Any,
+    cached_sheet: Any,
+    theme_colors: tuple[str, ...],
+) -> dict[tuple[int, int], SemanticCell]:
     cells: dict[tuple[int, int], SemanticCell] = {}
     for source_cell in sheet._cells.values():
         comment = getattr(source_cell, "comment", None)
@@ -193,6 +283,7 @@ def _sheet_cells(sheet: Any, cached_sheet: Any) -> dict[tuple[int, int], Semanti
             comment=plain_text(comment.text) if comment is not None and has_value(comment.text) else None,
             comment_author=plain_text(comment.author) if comment is not None and has_value(comment.author) else None,
             is_bold=bool(getattr(getattr(source_cell, "font", None), "bold", False)),
+            fill_rgb=_resolve_fill_rgb(source_cell, theme_colors),
         )
     return cells
 
@@ -215,8 +306,9 @@ def _sheet_bounds(sheet: Any, cells: dict[tuple[int, int], SemanticCell]) -> tup
 
 def build_semantic_workbook(workbook: Any, cached_workbook: Any, filename: str | None = None) -> SemanticWorkbook:
     sheets: list[SemanticSheet] = []
+    theme_colors = _theme_colors(workbook)
     for sheet in workbook.worksheets:
-        cells = _sheet_cells(sheet, cached_workbook[sheet.title])
+        cells = _sheet_cells(sheet, cached_workbook[sheet.title], theme_colors)
         bounds = _sheet_bounds(sheet, cells)
         merges = tuple(
             SemanticMerge(

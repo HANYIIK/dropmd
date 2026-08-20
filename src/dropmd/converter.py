@@ -4,7 +4,7 @@ import os
 import tempfile
 from collections.abc import Callable
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol
 
 from dropmd_markitdown import MarkItDown
 
@@ -33,7 +33,7 @@ class ConverterResult(Protocol):
 
 
 class DocumentConverter(Protocol):
-    def convert(self, source: Path) -> ConverterResult: ...
+    def convert(self, source: Path, **kwargs: Any) -> ConverterResult: ...
 
 
 class UnsupportedFileError(ValueError):
@@ -56,6 +56,7 @@ def convert_file(
     source: Path,
     *,
     overwrite: bool = True,
+    preserve_excel_colors: bool = False,
     converter_factory: Callable[[], DocumentConverter] = MarkItDown,
 ) -> Path:
     source = source.expanduser().resolve()
@@ -67,7 +68,10 @@ def convert_file(
     if destination.exists() and not overwrite:
         raise OutputExistsError(f"{destination.name} 已存在")
 
-    result = converter_factory().convert(source)
+    conversion_options = {}
+    if preserve_excel_colors and source.suffix.lower() == ".xlsx":
+        conversion_options["preserve_excel_colors"] = True
+    result = converter_factory().convert(source, **conversion_options)
     markdown = result.markdown
     if not isinstance(markdown, str):
         raise TypeError("转换结果不是文本")

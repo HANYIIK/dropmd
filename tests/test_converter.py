@@ -6,6 +6,7 @@ from zipfile import ZIP_DEFLATED, ZipFile
 
 import pytest
 from openpyxl import Workbook
+from openpyxl.styles import Color, PatternFill
 
 from dropmd.converter import OutputExistsError, UnsupportedFileError, convert_file, output_path_for
 
@@ -43,6 +44,25 @@ def test_convert_writes_utf8_markdown_beside_source(tmp_path: Path):
 
     assert destination == tmp_path / "示例.md"
     assert destination.read_text(encoding="utf-8") == "# 示例\n\n转换成功\n"
+
+
+def test_excel_color_option_is_only_forwarded_for_xlsx(tmp_path: Path):
+    received: list[dict[str, object]] = []
+
+    class RecordingConverter:
+        def convert(self, source: Path, **kwargs: object):
+            received.append(kwargs)
+            return SimpleNamespace(markdown=f"# {source.stem}")
+
+    xlsx = tmp_path / "颜色.xlsx"
+    xlsx.write_bytes(b"test")
+    docx = tmp_path / "普通.docx"
+    docx.write_bytes(b"test")
+
+    convert_file(xlsx, preserve_excel_colors=True, converter_factory=RecordingConverter)
+    convert_file(docx, preserve_excel_colors=True, converter_factory=RecordingConverter)
+
+    assert received == [{"preserve_excel_colors": True}, {}]
 
 
 def test_existing_output_is_preserved_when_overwrite_is_disabled(tmp_path: Path):
@@ -88,6 +108,97 @@ def test_xlsx_preserves_merged_hierarchy_and_text_identifiers(tmp_path: Path):
     assert "NaN" not in markdown
     assert "Unnamed:" not in markdown
     assert "<br>" not in markdown
+
+
+def test_xlsx_cell_colors_are_optional_and_default_to_unchanged_output(tmp_path: Path):
+    source = tmp_path / "颜色可选.xlsx"
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.append(["评价", "结果"])
+    sheet.append(["雅思", "6.5"])
+    sheet["A2"].fill = PatternFill(fill_type="solid", fgColor="FFFF0000")
+    sheet["B2"].fill = PatternFill(fill_type="solid", fgColor="FF92D050")
+    workbook.save(source)
+
+    markdown = convert_file(source).read_text(encoding="utf-8")
+
+    assert "| 雅思 | 6.5 |" in markdown
+    assert "Excel 单元格颜色图例" not in markdown
+    assert "🟥" not in markdown
+    assert "🟩" not in markdown
+    assert "字体、颜色或版式" in markdown
+
+
+def test_xlsx_cell_colors_emit_emoji_and_exact_hex_legend_when_enabled(tmp_path: Path):
+    source = tmp_path / "颜色保留.xlsx"
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.append(["红色", "橙色", "绿色", "主题色", "索引色"])
+    sheet.append(["0-4.5", "6", "6.5", "主题", "索引"])
+    sheet["A2"].fill = PatternFill(fill_type="solid", fgColor="FFFF0000")
+    sheet["B2"].fill = PatternFill(fill_type="solid", fgColor="FFED7D31")
+    sheet["C2"].fill = PatternFill(fill_type="solid", fgColor="FF92D050")
+    sheet["D2"].fill = PatternFill(fill_type="solid", fgColor=Color(theme=5))
+    sheet["E2"].fill = PatternFill(fill_type="solid", fgColor=Color(indexed=5))
+    workbook.save(source)
+
+    markdown = convert_file(source, preserve_excel_colors=True).read_text(encoding="utf-8")
+
+    assert "| 🟥 0-4.5 | 🟧 6 | 🟩 6.5 |" in markdown
+    assert "## Excel 单元格颜色图例" in markdown
+    assert "`#FF0000`" in markdown
+    assert "`#ED7D31`" in markdown
+    assert "`#92D050`" in markdown
+    assert "`#C0504D`" in markdown
+    assert "`#FFFF00`" in markdown
+    assert "单元格填充色：5/5 个非空着色单元格已标记（5 种精确颜色）" in markdown
+    assert "不推断颜色的业务含义" in markdown
+
+
+def test_xlsx_custom_colors_with_same_emoji_receive_stable_collision_ids(tmp_path: Path):
+    source = tmp_path / "自定义颜色.xlsx"
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.append(["方案 A", "方案 B"])
+    sheet.append(["第一项", "第二项"])
+    sheet["A2"].fill = PatternFill(fill_type="solid", fgColor="FFF00000")
+    sheet["B2"].fill = PatternFill(fill_type="solid", fgColor="FFE01020")
+    workbook.save(source)
+
+    markdown = convert_file(source, preserve_excel_colors=True).read_text(encoding="utf-8")
+
+    assert "| 🟥[C1] 第一项 | 🟥[C2] 第二项 |" in markdown
+    assert "- 🟥[C1] = `#F00000`" in markdown
+    assert "- 🟥[C2] = `#E01020`" in markdown
+
+
+def test_xlsx_preserves_nested_lists_as_coordinate_linked_markdown_details(tmp_path: Path):
+    source = tmp_path / "结构化列表.xlsx"
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "功能清单"
+    sheet.append(["编号", "一级模块", "二级模块", "功能项", "说明"])
+    sheet.append(
+        [
+            25,
+            "招聘过程",
+            "简历筛选",
+            "智能筛选",
+            "1. AI智能匹配\n• 匹配度评分\n• 高匹配度标识\n2. AI自动推荐\n• 群星推荐\n• 自动筛选",
+        ]
+    )
+    workbook.save(source)
+
+    markdown = convert_file(source).read_text(encoding="utf-8")
+
+    assert "| 25 | 招聘过程 | 简历筛选 | 智能筛选 | 详见「E2 结构化详情」 |" in markdown
+    assert "#### E2 · 25 / 招聘过程 / 简历筛选 / 智能筛选" in markdown
+    assert "1. AI智能匹配\n   - 匹配度评分\n   - 高匹配度标识" in markdown
+    assert "2. AI自动推荐\n   - 群星推荐\n   - 自动筛选" in markdown
+    assert "结构化列表单元格：1 个已保留为 Markdown 层级" in markdown
+    assert "<br>" not in markdown
+    assert "<ol" not in markdown
+    assert "<ul" not in markdown
 
 
 def test_xlsx_renders_horizontal_merges_as_sections_and_notes(tmp_path: Path):
@@ -196,6 +307,12 @@ def test_xlsx_emits_workbook_semantics_and_formula_provenance(tmp_path: Path):
     assert markdown.startswith("# 语义报价\n")
     assert "2 个工作表（1 个可见，1 个隐藏）" in markdown
     assert "1 个公式单元格" in markdown
+    assert "## 语义转换完整性" in markdown
+    assert "工作表：2/2 已保留（隐藏工作表 1/1）" in markdown
+    assert "可追踪语义单元格：12/12 已表示" in markdown
+    assert "公式：1/1 已保留（缓存结果 1/1）" in markdown
+    assert "合成记录：0" in markdown
+    assert "编号显示值变更：0" in markdown
     assert "- `报价汇总`：区域 `A1:B4`；可见；1 个公式" in markdown
     assert "> **源表提示：** 原工作表为隐藏状态。" in markdown
     assert "| **合计** | **30** |" in markdown
