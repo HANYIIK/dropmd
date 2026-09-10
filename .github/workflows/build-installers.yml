@@ -22,7 +22,7 @@ jobs:
     strategy:
       matrix:
         include:
-          - runner: macos-14
+          - runner: macos-15
             architecture: Apple-Silicon
           - runner: macos-15-intel
             architecture: Intel
@@ -33,6 +33,13 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
+      - name: Install test dependencies
+        run: python -m pip install -e '.[test]'
+      - name: Run regression tests
+        env:
+          QT_QPA_PLATFORM: offscreen
+          DROPMD_REDUCE_MOTION: "1"
+        run: python -m pytest -q
       - run: DROPMD_RELEASE_NAME=DropMD-macOS-${{ matrix.architecture }}.dmg bash scripts/build_macos.sh
       - uses: actions/upload-artifact@v4
         with:
@@ -48,6 +55,13 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
+      - name: Install test dependencies
+        run: python -m pip install -e '.[test]'
+      - name: Run regression tests
+        env:
+          QT_QPA_PLATFORM: offscreen
+          DROPMD_REDUCE_MOTION: "1"
+        run: python -m pytest -q
       - run: choco install innosetup --no-progress -y
       - shell: pwsh
         run: ./scripts/build_windows.ps1

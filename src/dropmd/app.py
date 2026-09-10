@@ -5,7 +5,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from PySide6.QtCore import QEasingCurve, QEvent, QObject, QPoint, QPropertyAnimation, QRunnable, QSettings, QSize, Qt, QThreadPool, QTimer, QUrl, Signal
+from PySide6.QtCore import QEvent, QObject, QPoint, QRunnable, QSettings, QSize, Qt, QThreadPool, QTimer, QUrl, Signal
 from PySide6.QtGui import QAction, QActionGroup, QColor, QDesktopServices, QDragEnterEvent, QDropEvent, QIcon, QMouseEvent
 from PySide6.QtWidgets import (
     QApplication,
@@ -13,11 +13,9 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QFrame,
     QGraphicsDropShadowEffect,
-    QGraphicsOpacityEffect,
     QHBoxLayout,
     QLabel,
     QMainWindow,
-    QMenu,
     QProgressBar,
     QPushButton,
     QScrollArea,
@@ -28,7 +26,10 @@ from PySide6.QtWidgets import (
 )
 
 from .converter import SUPPORTED_EXTENSIONS, convert_file, is_supported, output_path_for
-from .styles import stylesheet
+from .macos import MacWindowChrome, uses_native_titlebar
+from .menus import RoundedMenu
+from .motion import flash_feedback
+from .styles import PALETTES, stylesheet
 
 
 THEME_LABELS = {"system": "跟随系统", "light": "浅色", "dark": "深色"}
@@ -67,43 +68,9 @@ def prefers_reduced_motion() -> bool:
     return False
 
 
-def fade_widget(
-    widget: QWidget,
-    *,
-    enabled: bool,
-    start: float = 0.0,
-    end: float = 1.0,
-    duration: int = 220,
-    hide_when_finished: bool = False,
-) -> None:
-    previous = getattr(widget, "_fade_animation", None)
-    if previous:
-        previous.stop()
-    previous_effect = widget.graphicsEffect()
-    if isinstance(previous_effect, QGraphicsOpacityEffect):
-        widget.setGraphicsEffect(None)
-    if not enabled:
-        widget.setVisible(not hide_when_finished)
-        return
-    effect = QGraphicsOpacityEffect(widget)
-    widget.setGraphicsEffect(effect)
-    effect.setOpacity(start)
-    widget.show()
-    animation = QPropertyAnimation(effect, b"opacity", widget)
-    animation.setDuration(duration)
-    animation.setStartValue(start)
-    animation.setEndValue(end)
-    animation.setEasingCurve(QEasingCurve.Type.OutQuart)
-    def finish() -> None:
-        if hide_when_finished:
-            widget.hide()
-        if widget.graphicsEffect() is effect:
-            widget.setGraphicsEffect(None)
-        widget._fade_animation = None
-
-    animation.finished.connect(finish)
-    widget._fade_animation = animation
-    animation.start()
+def feedback_color(widget: QWidget, role: str = "accent") -> QColor:
+    theme = getattr(widget.window(), "theme", None) or system_theme(QApplication.instance())
+    return QColor(PALETTES[theme][role])
 
 
 class DesktopApplication(QApplication):
@@ -163,7 +130,7 @@ class ConversionWorker(QRunnable):
 class TitleBar(QFrame):
     themeModeRequested = Signal(str)
 
-    def __init__(self):
+    def __init__(self, *, native_controls: bool = False, animations_enabled: bool = True):
         super().__init__()
         self.setObjectName("titleBar")
         self.setFixedHeight(54)
@@ -172,12 +139,14 @@ class TitleBar(QFrame):
         layout.setContentsMargins(18, 0, 14, 0)
         layout.setSpacing(8)
 
-        self.close_button = self._control_button("×", "closeButton", "关闭")
-        self.minimize_button = self._control_button("−", "minimizeButton", "最小化")
-        self.maximize_button = self._control_button("+", "maximizeButton", "最大化")
-        self.close_button.clicked.connect(lambda: self.window().close())
-        self.minimize_button.clicked.connect(lambda: self.window().showMinimized())
-        self.maximize_button.clicked.connect(self._toggle_maximized)
+        self.close_button = self.minimize_button = self.maximize_button = None
+        if not native_controls:
+            self.close_button = self._control_button("×", "closeButton", "关闭")
+            self.minimize_button = self._control_button("−", "minimizeButton", "最小化")
+            self.maximize_button = self._control_button("+", "maximizeButton", "最大化")
+            self.close_button.clicked.connect(lambda: self.window().close())
+            self.minimize_button.clicked.connect(lambda: self.window().showMinimized())
+            self.maximize_button.clicked.connect(self._toggle_maximized)
 
         brand = QLabel("DROPMD")
         brand.setObjectName("brandMark")
@@ -190,7 +159,7 @@ class TitleBar(QFrame):
         self.theme_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.theme_button.setFlat(True)
 
-        self.theme_menu = QMenu(self.theme_button)
+        self.theme_menu = RoundedMenu(self.theme_button, animations_enabled=animations_enabled)
         self.theme_group = QActionGroup(self.theme_menu)
         self.theme_group.setExclusive(True)
         self.theme_actions: dict[str, QAction] = {}
@@ -203,10 +172,13 @@ class TitleBar(QFrame):
             self.theme_actions[mode] = action
         self.theme_button.setMenu(self.theme_menu)
 
-        layout.addWidget(self.close_button)
-        layout.addWidget(self.minimize_button)
-        layout.addWidget(self.maximize_button)
-        layout.addSpacing(12)
+        if not native_controls:
+            layout.addWidget(self.close_button)
+            layout.addWidget(self.minimize_button)
+            layout.addWidget(self.maximize_button)
+            layout.addSpacing(12)
+        else:
+            layout.setContentsMargins(96, 0, 14, 0)
         layout.addWidget(brand)
         layout.addStretch()
         layout.addWidget(self.theme_button)
@@ -217,7 +189,6 @@ class TitleBar(QFrame):
         button.setObjectName(name)
         button.setCursor(Qt.CursorShape.PointingHandCursor)
         button.setAccessibleName(accessible_name)
-        button.setToolTip(accessible_name)
         return button
 
     def set_theme(self, mode: str, resolved_theme: str) -> None:
@@ -294,7 +265,7 @@ class DropZone(QFrame):
         self.icon.style().unpolish(self.icon)
         self.icon.style().polish(self.icon)
         if active:
-            fade_widget(self.icon, enabled=self.animations_enabled, start=0.38, end=1.0, duration=180)
+            flash_feedback(self, feedback_color(self), enabled=self.animations_enabled, radius=15)
 
     def dragEnterEvent(self, event: QDragEnterEvent) -> None:
         if event.mimeData().hasUrls() and any(url.isLocalFile() for url in event.mimeData().urls()):
@@ -359,6 +330,9 @@ class JobRow(QFrame):
         self.copy_button.setAccessibleName("复制 Markdown 内容")
         self.copy_button.clicked.connect(self.copy_markdown)
         self.copy_button.hide()
+        self.copy_reset_timer = QTimer(self)
+        self.copy_reset_timer.setSingleShot(True)
+        self.copy_reset_timer.timeout.connect(self._reset_copy_button)
 
         self.open_button = QPushButton("打开")
         self.open_button.setObjectName("linkButton")
@@ -371,7 +345,7 @@ class JobRow(QFrame):
         self.more_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.more_button.setAccessibleName("更多操作")
         self.more_button.setToolTip("更多操作")
-        self.more_menu = QMenu(self.more_button)
+        self.more_menu = RoundedMenu(self.more_button, animations_enabled=self.animations_enabled)
         reveal_action = self.more_menu.addAction("在文件夹中显示")
         reveal_action.triggered.connect(self._reveal_destination)
         copy_path_action = self.more_menu.addAction("复制文件路径")
@@ -379,6 +353,7 @@ class JobRow(QFrame):
         self.retry_action = self.more_menu.addAction("重新转换")
         self.retry_action.triggered.connect(lambda: self.retryRequested.emit(self.source))
         self.retry_action.setVisible(False)
+
         self.more_button.setMenu(self.more_menu)
         self.more_button.hide()
 
@@ -411,6 +386,7 @@ class JobRow(QFrame):
         self.open_button.show()
         self.more_button.show()
         self.retry_action.setVisible(False)
+        flash_feedback(self, feedback_color(self, "success"), enabled=self.animations_enabled, radius=0)
 
     def mark_error(self, message: str) -> None:
         self.state = "error"
@@ -422,6 +398,7 @@ class JobRow(QFrame):
         self.retry_action.setVisible(True)
         self.more_button.show()
         self._refresh(self.status)
+        flash_feedback(self, feedback_color(self, "error"), enabled=self.animations_enabled, radius=0)
 
     @staticmethod
     def _format_size(size: int) -> str:
@@ -448,8 +425,9 @@ class JobRow(QFrame):
         self.copy_button.setText("已复制 ✓")
         self.copy_button.setProperty("copied", True)
         self._refresh(self.copy_button)
+        flash_feedback(self.copy_button, feedback_color(self, "success"), enabled=self.animations_enabled, radius=7)
         self.markdownCopied.emit(self.destination)
-        QTimer.singleShot(1800, self._reset_copy_button)
+        self.copy_reset_timer.start(1800)
         return True
 
     def _reset_copy_button(self) -> None:
@@ -486,8 +464,19 @@ class MainWindow(QMainWindow):
         self.setMinimumSize(QSize(760, 660))
         self.resize(920, 760)
         self.setAcceptDrops(True)
-        self.setWindowFlags(Qt.WindowType.Window | Qt.WindowType.FramelessWindowHint)
-        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.native_controls = uses_native_titlebar()
+        self.native_chrome = None
+        if self.native_controls:
+            self.setWindowFlags(
+                Qt.WindowType.Window
+                | Qt.WindowType.ExpandedClientAreaHint
+                | Qt.WindowType.NoTitleBarBackgroundHint
+                | Qt.WindowType.WindowFullscreenButtonHint
+            )
+            self.setAttribute(Qt.WidgetAttribute.WA_ContentsMarginsRespectsSafeArea, False)
+        else:
+            self.setWindowFlags(Qt.WindowType.Window | Qt.WindowType.FramelessWindowHint)
+            self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
 
         bundle_root = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parents[3]))
         icon_path = bundle_root / "assets" / "icon.png"
@@ -501,29 +490,35 @@ class MainWindow(QMainWindow):
         self.auto_copy_sources: set[Path] = set()
         self.animations_enabled = not prefers_reduced_motion()
         self._notice_generation = 0
+        self.notice_timer = QTimer(self)
+        self.notice_timer.setSingleShot(True)
+        self.notice_timer.timeout.connect(lambda: self._hide_notice(self._notice_generation))
 
         canvas = QWidget()
         canvas.setObjectName("windowCanvas")
         self.setCentralWidget(canvas)
         self.canvas_layout = QVBoxLayout(canvas)
-        self.canvas_layout.setContentsMargins(12, 12, 12, 12)
+        margin = 0 if self.native_controls else 12
+        self.canvas_layout.setContentsMargins(margin, margin, margin, margin)
 
         self.surface = QFrame()
         self.surface.setObjectName("windowSurface")
         self.surface.setProperty("maximized", False)
-        shadow = QGraphicsDropShadowEffect(self)
-        shadow.setBlurRadius(30)
-        shadow.setOffset(QPoint(0, 7))
-        shadow.setColor(QColor(7, 20, 18, 72))
-        self.surface.setGraphicsEffect(shadow)
-        self.shadow = shadow
+        self.surface.setProperty("nativeChrome", self.native_controls)
+        self.shadow = None
+        if not self.native_controls:
+            self.shadow = QGraphicsDropShadowEffect(self)
+            self.shadow.setBlurRadius(30)
+            self.shadow.setOffset(QPoint(0, 7))
+            self.shadow.setColor(QColor(7, 20, 18, 72))
+            self.surface.setGraphicsEffect(self.shadow)
         self.canvas_layout.addWidget(self.surface)
 
         shell = QVBoxLayout(self.surface)
         shell.setContentsMargins(0, 0, 0, 0)
         shell.setSpacing(0)
 
-        self.title_bar = TitleBar()
+        self.title_bar = TitleBar(native_controls=self.native_controls, animations_enabled=self.animations_enabled)
         self.title_bar.set_theme(self.theme_mode, self.theme)
         self.title_bar.themeModeRequested.connect(self.set_theme_mode)
         shell.addWidget(self.title_bar)
@@ -658,6 +653,20 @@ class MainWindow(QMainWindow):
         self.panel_stack.setCurrentWidget(self.empty_state)
         content_layout.addWidget(self.list_panel, 1)
 
+        if self.native_controls:
+            self.native_chrome = MacWindowChrome(self)
+            self.native_chrome.set_theme(self.theme_mode)
+            self.windowHandle().safeAreaMarginsChanged.connect(self._sync_native_titlebar)
+            self._sync_native_titlebar()
+
+    def _sync_native_titlebar(self) -> None:
+        if not self.native_chrome:
+            return
+        height = max(40, self.windowHandle().safeAreaMargins().top())
+        self.title_bar.setFixedHeight(height)
+        inset = self.native_chrome.leading_inset()
+        self.title_bar.layout().setContentsMargins(inset, 0, 14, 0)
+
     def _resolved_theme(self) -> str:
         if self.theme_mode == "system":
             application = QApplication.instance()
@@ -675,6 +684,9 @@ class MainWindow(QMainWindow):
         self.theme = self._resolved_theme()
         QApplication.instance().setStyleSheet(stylesheet(self.theme))
         self.title_bar.set_theme(self.theme_mode, self.theme)
+        if self.native_chrome:
+            self.native_chrome.set_theme(self.theme_mode)
+        flash_feedback(self.title_bar.theme_button, feedback_color(self), enabled=self.animations_enabled, radius=9)
 
     def system_color_scheme_changed(self) -> None:
         if self.theme_mode == "system":
@@ -796,23 +808,19 @@ class MainWindow(QMainWindow):
 
     def _show_notice(self, message: str, *, success: bool) -> None:
         self._notice_generation += 1
-        generation = self._notice_generation
         self.notice.setText(message)
         self.notice_icon.setText("✓" if success else "!")
         self.notice_frame.setObjectName("noticeFrameSuccess" if success else "noticeFrameError")
         self.notice_frame.style().unpolish(self.notice_frame)
         self.notice_frame.style().polish(self.notice_frame)
         self.notice_frame.show()
-        QTimer.singleShot(4200, lambda: self._hide_notice(generation))
+        flash_feedback(self.notice_frame, feedback_color(self, "success" if success else "error"), enabled=self.animations_enabled, radius=8)
+        self.notice_timer.start(4200)
 
     def _hide_notice(self, generation: int) -> None:
         if generation != self._notice_generation or not self.notice_frame.isVisible():
             return
-        animation = getattr(self.notice_frame, "_fade_animation", None)
-        if animation:
-            animation.stop()
-        if isinstance(self.notice_frame.graphicsEffect(), QGraphicsOpacityEffect):
-            self.notice_frame.setGraphicsEffect(None)
+        self.notice_timer.stop()
         self.notice_frame.hide()
 
     def clear_finished(self) -> None:
@@ -827,14 +835,14 @@ class MainWindow(QMainWindow):
         self._update_summary()
 
     def changeEvent(self, event: QEvent) -> None:
-        if event.type() == QEvent.Type.WindowStateChange:
+        if event.type() == QEvent.Type.WindowStateChange and not self.native_controls:
             maximized = self.isMaximized()
             self.canvas_layout.setContentsMargins(0, 0, 0, 0) if maximized else self.canvas_layout.setContentsMargins(12, 12, 12, 12)
             self.surface.setProperty("maximized", maximized)
             self.shadow.setEnabled(not maximized)
             self.surface.style().unpolish(self.surface)
             self.surface.style().polish(self.surface)
-            self.title_bar.maximize_button.setToolTip("还原" if maximized else "最大化")
+            self.title_bar.maximize_button.setAccessibleName("还原" if maximized else "最大化")
         super().changeEvent(event)
 
     def resizeEvent(self, event) -> None:
@@ -856,7 +864,7 @@ def main() -> int:
     application = DesktopApplication(sys.argv)
     application.setApplicationName("DropMD")
     application.setApplicationDisplayName("DropMD")
-    application.setApplicationVersion("1.5.0")
+    application.setApplicationVersion("1.5.1")
     application.setOrganizationName("DropMD")
     application.setOrganizationDomain("dropmd.app")
     application.setDesktopFileName("com.dropmd.desktop")

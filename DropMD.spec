@@ -8,6 +8,7 @@ root = Path(SPECPATH)
 datas = [
     (str(root / "THIRD_PARTY_NOTICES.md"), "."),
     (str(root / "assets" / "icon.png"), "assets"),
+    (str(root / "src" / "dropmd" / "assets"), "dropmd/assets"),
 ]
 hiddenimports = []
 
@@ -66,11 +67,11 @@ if sys.platform == "darwin":
         info_plist={
             "CFBundleDevelopmentRegion": "zh_CN",
             "CFBundleDisplayName": "DropMD",
-            "CFBundleGetInfoString": "DropMD 1.5.0 — Document to Markdown converter",
-            "CFBundleShortVersionString": "1.5.0",
-            "CFBundleVersion": "150",
+            "CFBundleGetInfoString": "DropMD 1.5.1 — Document to Markdown converter",
+            "CFBundleShortVersionString": "1.5.1",
+            "CFBundleVersion": "151",
             "LSApplicationCategoryType": "public.app-category.productivity",
-            "LSMinimumSystemVersion": "11.0",
+            "LSMinimumSystemVersion": "15.0",
             "NSHumanReadableCopyright": "Copyright © 2026 DropMD",
             "MDItemDescription": "将 DOCX、PDF、PPTX、XLSX 等文档转换为 Markdown",
             "NSHighResolutionCapable": True,

@@ -1,10 +1,11 @@
 from pathlib import Path
 
-from PySide6.QtCore import QSettings
+from PySide6.QtCore import QCoreApplication, QEvent, QSettings, Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
+from shiboken6 import isValid
 
-from dropmd.app import ConversionWorker, JobRow, MainWindow, prefers_reduced_motion, system_theme
+from dropmd.app import ConversionWorker, JobRow, MainWindow, TitleBar, prefers_reduced_motion, system_theme
 
 
 def test_copy_markdown_places_full_content_on_clipboard(qt_app: QApplication, tmp_path: Path):
@@ -19,6 +20,27 @@ def test_copy_markdown_places_full_content_on_clipboard(qt_app: QApplication, tm
 
     assert qt_app.clipboard().text() == markdown
     assert row.copy_button.text() == "已复制 ✓"
+
+
+def test_repeated_copy_restarts_confirmation_timer(qt_app, qt_wait_until, tmp_path):
+    destination = tmp_path / "example.md"
+    destination.write_text("# Example\n", encoding="utf-8")
+    row = JobRow(tmp_path / "example.txt", animations_enabled=False)
+    row.mark_success(destination)
+    row.copy_markdown()
+    row.copy_reset_timer.start(30)
+
+    row.copy_markdown()
+    QTest.qWait(60)
+
+    assert row.copy_button.text() == "已复制 ✓"
+    assert row.copy_reset_timer.isActive()
+    assert row.copy_reset_timer.interval() == 1800
+    row.copy_reset_timer.start(10)
+    qt_wait_until(lambda: row.copy_button.text() == "复制")
+    assert row.copy_button.text() == "复制"
+    assert row.copy_button.property("copied") is False
+    row.close()
 
 
 def test_theme_mode_is_persisted(qt_app: QApplication, tmp_path: Path):
@@ -117,6 +139,64 @@ def test_window_controls_are_available(qt_app: QApplication, tmp_path: Path):
     window.close()
 
 
+def test_window_controls_have_no_tooltips_after_maximize_and_restore(qt_app, tmp_path):
+    settings = QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat)
+    window = MainWindow("light", settings)
+    for state in (Qt.WindowNoState, Qt.WindowMaximized, Qt.WindowNoState):
+        window.setWindowState(state)
+        qt_app.processEvents()
+        for button in (
+            window.title_bar.close_button,
+            window.title_bar.minimize_button,
+            window.title_bar.maximize_button,
+        ):
+            assert button.toolTip() == ""
+    assert window.title_bar.maximize_button.accessibleName() == "最大化"
+    window.close()
+
+
+def test_native_titlebar_does_not_create_duplicate_qt_controls(qt_app):
+    titlebar = TitleBar(native_controls=True)
+    assert titlebar.close_button is None
+    assert titlebar.minimize_button is None
+    assert titlebar.maximize_button is None
+    assert titlebar.theme_button.accessibleName() == "外观设置"
+    titlebar.close()
+
+
+def test_native_window_preserves_system_frame_in_all_states(qt_app, tmp_path, monkeypatch):
+    class FakeChrome:
+        def __init__(self, widget):
+            widget.winId()
+            self.mode = None
+
+        def leading_inset(self):
+            return 92
+
+        def set_theme(self, mode):
+            self.mode = mode
+
+    monkeypatch.setattr("dropmd.app.uses_native_titlebar", lambda: True)
+    monkeypatch.setattr("dropmd.app.MacWindowChrome", FakeChrome)
+    settings = QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat)
+    window = MainWindow("system", settings)
+    assert window.windowFlags() & Qt.ExpandedClientAreaHint
+    assert window.windowFlags() & Qt.NoTitleBarBackgroundHint
+    assert not window.windowFlags() & Qt.FramelessWindowHint
+    assert window.shadow is None
+    assert not window.testAttribute(Qt.WA_TranslucentBackground)
+    for state in (Qt.WindowMaximized, Qt.WindowFullScreen, Qt.WindowNoState):
+        window.setWindowState(state)
+        qt_app.processEvents()
+        assert window.canvas_layout.contentsMargins().isNull()
+        assert window.surface.property("nativeChrome") is True
+    for mode in ("light", "dark", "system"):
+        window.set_theme_mode(mode)
+        assert window.native_chrome.mode == mode
+    assert window.title_bar.layout().contentsMargins().left() == 92
+    window.close()
+
+
 def test_notice_uses_padded_container(qt_app: QApplication, tmp_path: Path):
     settings = QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat)
     window = MainWindow("light", settings)
@@ -142,6 +222,27 @@ def test_notice_animation_cleans_up_and_hides_without_layout_gap(qt_app: QApplic
     assert window.notice_frame.isHidden()
     assert window.notice_frame.graphicsEffect() is None
     window.close()
+
+
+def test_notice_timer_restarts_and_is_owned_by_window(qt_app, tmp_path):
+    settings = QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat)
+    window = MainWindow("light", settings)
+    window.show()
+    window._show_notice("已复制。", success=True)
+    window.notice_timer.start(30)
+    window._show_notice("请检查文件。", success=False)
+    QTest.qWait(60)
+    assert window.notice_frame.isVisible()
+    assert window.notice.text() == "请检查文件。"
+    assert window.notice_timer.isActive()
+    assert window.notice_timer.interval() == 4200
+    timer = window.notice_timer
+    assert timer.parent() is window
+    timer.start(30)
+    window.deleteLater()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    assert not isValid(timer)
+    QTest.qWait(60)
 
 
 def test_rows_are_top_aligned_without_trailing_stretch(qt_app: QApplication, tmp_path: Path):
@@ -207,3 +308,59 @@ def test_reduced_motion_environment_override(monkeypatch):
 
     monkeypatch.setenv("DROPMD_REDUCE_MOTION", "0")
     assert prefers_reduced_motion() is False
+
+
+def test_reduced_motion_reaches_menus_and_feedback(qt_app, tmp_path, monkeypatch):
+    monkeypatch.setenv("DROPMD_REDUCE_MOTION", "1")
+    settings = QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat)
+    window = MainWindow("light", settings)
+    window.show()
+    qt_app.processEvents()
+    window.set_theme_mode("dark")
+    window.drop_zone._set_drag_active(True)
+    window._show_notice("已生成 example.md。", success=True)
+
+    assert window.animations_enabled is False
+    assert window.title_bar.theme_menu.animations_enabled is False
+    assert window.drop_zone.animations_enabled is False
+    for target in (window.title_bar.theme_button, window.drop_zone, window.notice_frame):
+        assert not hasattr(target, "_dropmd_feedback_overlay")
+    row = JobRow(tmp_path / "example.txt", animations_enabled=window.animations_enabled)
+    assert row.more_menu.animations_enabled is False
+    row.close()
+    window.close()
+
+
+def test_feedback_integrations_preserve_layout_and_clean_up(qt_app, qt_wait_until, tmp_path, monkeypatch):
+    monkeypatch.setenv("DROPMD_REDUCE_MOTION", "0")
+    settings = QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat)
+    window = MainWindow("light", settings)
+    destination = tmp_path / "example.md"
+    destination.write_text("# Example\n", encoding="utf-8")
+    row = JobRow(tmp_path / "example.txt", animations_enabled=window.animations_enabled)
+    window.rows_layout.addWidget(row)
+    window.panel_stack.setCurrentWidget(window.scroll)
+    window.show()
+    qt_app.processEvents()
+
+    window.drop_zone._set_drag_active(True)
+    row.mark_success(destination)
+    qt_app.processEvents()
+    geometry = row.geometry()
+    row.copy_markdown()
+    window._show_notice("已生成 example.md。", success=True)
+    window._show_notice("请检查文件。", success=False)
+    targets = (window.drop_zone, row, row.copy_button, window.notice_frame)
+    assert all(hasattr(target, "_dropmd_feedback_overlay") for target in targets)
+    assert window.rows_layout.count() == 1
+    assert row.geometry() == geometry
+    assert row.status.height() == 24
+    qt_wait_until(lambda: all(not hasattr(target, "_dropmd_feedback_overlay") for target in targets))
+    assert all(not hasattr(target, "_dropmd_feedback_overlay") for target in targets)
+    assert all(target.graphicsEffect() is None for target in targets)
+    assert row.copy_button.isVisible()
+    assert row.more_button.isVisible()
+    assert window.notice_frame.isVisible()
+    window._hide_notice(window._notice_generation)
+    assert window.notice_frame.isHidden()
+    window.close()

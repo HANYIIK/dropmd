@@ -7,6 +7,7 @@ cd "$project_dir"
 python -m pip install -e '.[build]'
 python scripts/build_icons.py
 python -m PyInstaller --noconfirm --clean DropMD.spec
+python scripts/check_macos_compatibility.py dist/DropMD.app
 
 mkdir -p release
 architecture="$(uname -m)"

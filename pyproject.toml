@@ -4,12 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "dropmd-desktop"
-version = "1.5.0"
+version = "1.5.1"
 description = "Drop local documents and convert them to Markdown beside the source file."
 readme = "README.md"
 requires-python = ">=3.11,<3.14"
 dependencies = [
-  "PySide6>=6.8,<7",
+  "PySide6==6.11.2",
+  "pyobjc-framework-Cocoa>=10.3,<13; platform_system == 'Darwin'",
   "beautifulsoup4",
   "charset-normalizer",
   "defusedxml",
@@ -40,6 +41,9 @@ dropmd = "dropmd.app:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+dropmd = ["assets/*.svg"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

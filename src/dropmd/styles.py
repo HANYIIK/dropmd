@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 
 PALETTES = {
     "light": {
@@ -55,6 +57,9 @@ PALETTES = {
 
 def stylesheet(theme: str) -> str:
     color = PALETTES.get(theme, PALETTES["light"])
+    check_theme = "dark" if theme == "dark" else "light"
+    checkmark = (Path(__file__).parent / "assets" / f"check-{check_theme}.svg").as_posix()
+    menu_checkmark = (Path(__file__).parent / "assets" / f"check-menu-{check_theme}.svg").as_posix()
     return f"""
 QWidget {{
     color: {color['text']};
@@ -68,6 +73,7 @@ QFrame#windowSurface {{
     border-radius: 18px;
 }}
 QFrame#windowSurface[maximized="true"] {{ border: none; border-radius: 0; }}
+QFrame#windowSurface[nativeChrome="true"] {{ border: none; border-radius: 0; }}
 QFrame#titleBar {{ background: transparent; border-bottom: 1px solid {color['border']}; }}
 QLabel#brandMark {{
     color: {color['accent']};
@@ -129,7 +135,7 @@ QMenu {{
 QMenu::item {{ min-width: 118px; padding: 7px 28px 7px 10px; border-radius: 6px; }}
 QMenu::item:selected {{ background: {color['surface_hover']}; }}
 QMenu::indicator {{ width: 14px; height: 14px; }}
-QMenu::indicator:checked {{ image: url(:/qt-project.org/styles/commonstyle/images/standardbutton-apply-16.png); }}
+QMenu::indicator:checked {{ image: url("{menu_checkmark}"); }}
 QLabel#eyebrow {{
     color: {color['accent']};
     font-size: 11px;
@@ -215,7 +221,7 @@ QCheckBox::indicator:checked {{
     background: {color['accent']};
     border: 1px solid {color['accent']};
     border-radius: 4px;
-    image: url(:/qt-project.org/styles/commonstyle/images/standardbutton-apply-16.png);
+    image: url("{checkmark}");
 }}
 QFrame#listPanel {{ background: {color['surface_alt']}; border: 1px solid {color['border']}; border-radius: 12px; }}
 QWidget#scrollContent {{ background: transparent; }}

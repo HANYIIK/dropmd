@@ -26,6 +26,9 @@ pytest
 
 ## 构建 macOS 安装包
 
+当前安装包要求 macOS 15 或更高版本，提供 Apple 芯片和 Intel 两种版本。
+构建时会检查包内 Python、Qt 和其他原生库的全部架构，要求其最低系统版本不高于应用声明；检查失败时不会生成 DMG。
+
 ```bash
 cd /Users/bello/Projects/dropmd
 source .venv/bin/activate
@@ -49,11 +52,11 @@ py -3.12 -m venv .venv
 
 ## 自动构建双平台安装包
 
-项目包含 GitHub Actions。推送到 GitHub 后，在 Actions 页面手动运行 `Build installers` 即可下载 Apple 芯片 Mac、Intel Mac 和 Windows 三个安装包；推送 `v1.0.0` 这类标签时还会自动创建 GitHub Release。
+项目包含 GitHub Actions。推送到 GitHub 后，在 Actions 页面手动运行 `Build installers` 即可下载 Apple 芯片 Mac、Intel Mac 和 Windows 三个安装包；每个平台先通过无界面回归测试再打包，原生 macOS 窗口交互需在本地另行验证。推送 `v1.5.1` 这类标签时还会自动创建 GitHub Release。
 
 ```bash
-git tag v1.5.0
-git push origin v1.5.0
+git tag v1.5.1
+git push origin v1.5.1
 ```
 
 ## 说明
